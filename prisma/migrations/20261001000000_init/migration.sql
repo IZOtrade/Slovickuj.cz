@@ -79,7 +79,6 @@ CREATE TABLE "UserSettings" (
     "mode" TEXT NOT NULL DEFAULT 'mix',
     "autoPlay" BOOLEAN NOT NULL DEFAULT false,
     "speechRate" DOUBLE PRECISION NOT NULL DEFAULT 1,
-    "starterPackCreated" BOOLEAN NOT NULL DEFAULT false,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "UserSettings_pkey" PRIMARY KEY ("id")

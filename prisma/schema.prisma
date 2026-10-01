@@ -87,6 +87,5 @@ model UserSettings {
   mode      String   @default("mix")
   autoPlay  Boolean  @default(false)
   speechRate Float   @default(1)
-  starterPackCreated Boolean @default(false)
   updatedAt DateTime @updatedAt
 }

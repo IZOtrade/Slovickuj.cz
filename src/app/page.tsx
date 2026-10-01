@@ -1,7 +1,6 @@
 import { auth, signIn, signOut } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Workspace } from "@/components/workspace";
-import { defaultWords } from "@/lib/default-words";
 
 export default async function Home() {
   const session = await auth();
@@ -27,23 +26,9 @@ export default async function Home() {
     </main>;
   }
 
-  let settings = await prisma.userSettings.upsert({ where: { userId: session.user.id }, update: {}, create: { userId: session.user.id } });
-  if (!settings.starterPackCreated) {
-    await prisma.$transaction(async (transaction) => {
-      const claimed = await transaction.userSettings.updateMany({ where: { userId: session.user.id, starterPackCreated: false }, data: { starterPackCreated: true } });
-      if (claimed.count === 1) {
-        await transaction.deck.create({ data: {
-          title: "Vzhled a osobnost",
-          description: "50 slovíček z prvního prototypu Slovickuj.cz.",
-          ownerId: session.user.id,
-          words: { create: defaultWords.map(({ en, cz, category }) => ({ en, cz, category })) },
-        } });
-      }
-    });
-  }
   const [decks, updatedSettings] = await Promise.all([
     prisma.deck.findMany({ where: { ownerId: session.user.id }, include: { words: { orderBy: { createdAt: "asc" } } }, orderBy: { updatedAt: "desc" } }),
-    prisma.userSettings.findUniqueOrThrow({ where: { userId: session.user.id } }),
+    prisma.userSettings.upsert({ where: { userId: session.user.id }, update: {}, create: { userId: session.user.id } }),
   ]);
 
   return <Workspace user={{ name: session.user.name ?? "", email: session.user.email ?? "", image: session.user.image ?? "" }} initialDecks={decks} settings={updatedSettings} signOut={async () => { "use server"; await signOut(); }} />;

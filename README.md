@@ -5,6 +5,7 @@ Osobní aplikace pro správu anglicko-českých slovíček a jejich opakování.
 ## Funkce
 
 - Soukromé balíčky a slovíčka pro přihlášeného uživatele.
+- Prázdný prostor po přihlášení; uživatel si zakládá vlastní balíčky a vkládá vlastní slovíčka.
 - Cyklické opakování s dalším kolem pouze z chybně zodpovězených slov.
 - Směr EN → CZ, CZ → EN a náhodný mix.
 - Hromadný import z textu (středník, tabulátor nebo čárka), inline úprava, hledání a export JSON/CSV.
