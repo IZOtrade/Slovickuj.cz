@@ -6,13 +6,16 @@ import type { Rating } from "@/lib/practice";
 export async function loadDeckHistory(deckId: string, userId: string, db: Pick<PrismaClient, "practiceRound" | "wordProgress"> = prisma): Promise<DeckHistory> {
   const where = { deckId, deck: { ownerId: userId } };
   const [totals, sessions, progress] = await Promise.all([
-    db.practiceRound.aggregate({ where, _sum: { reviewedCount: true }, _count: true }),
+    db.practiceRound.aggregate({ where, _sum: { reviewedCount: true, knownCount: true, unsureCount: true, unknownCount: true }, _count: true }),
     db.practiceRound.findMany({ where, orderBy: { lastReviewedAt: "desc" }, take: 8 }),
     db.wordProgress.findMany({ where: { word: { deckId, deck: { ownerId: userId } } } }),
   ]);
   return {
     totalReviews: totals._sum.reviewedCount ?? 0,
     totalSessions: totals._count,
+    knownReviews: totals._sum.knownCount ?? 0,
+    unsureReviews: totals._sum.unsureCount ?? 0,
+    unknownReviews: totals._sum.unknownCount ?? 0,
     sessions: sessions.map(item => ({ ...item, startedAt: item.startedAt.toISOString(), lastReviewedAt: item.lastReviewedAt.toISOString(), finishedAt: item.finishedAt?.toISOString() ?? null })),
     progress: Object.fromEntries(progress.map(item => [item.wordId, { ...item, lastRating: item.lastRating as Rating, lastReviewedAt: item.lastReviewedAt.toISOString(), nextReviewAt: item.nextReviewAt.toISOString() }])),
   };

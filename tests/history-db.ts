@@ -44,6 +44,7 @@ async function verify() {
       await writeReviewTransaction(tx, user.id, { ...input, eventId: randomUUID(), sessionId: randomUUID(), totalWords: 1 });
       history = await loadDeckHistory(deck.id, user.id, tx);
       assert.equal(history.totalReviews, 4, "known words must still be available in a new round");
+      assert.deepEqual([history.knownReviews, history.unsureReviews, history.unknownReviews], [2, 1, 1]);
       assert.equal(history.totalSessions, 2);
       assert.equal(history.progress[words[0].id].nextReviewAt, previousDue, "early practice must preserve due date");
       await tx.word.delete({ where: { id: words[0].id } });

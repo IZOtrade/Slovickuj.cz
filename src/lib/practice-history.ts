@@ -9,9 +9,9 @@ export type SessionSummary = {
   startedAt: string; lastReviewedAt: string; finishedAt: string | null;
 };
 export type DeckHistory = {
-  totalReviews: number; totalSessions: number; progress: Record<string, Progress>; sessions: SessionSummary[];
+  totalReviews: number; totalSessions: number; knownReviews: number; unsureReviews: number; unknownReviews: number; progress: Record<string, Progress>; sessions: SessionSummary[];
 };
-export const emptyHistory = (): DeckHistory => ({ totalReviews: 0, totalSessions: 0, progress: {}, sessions: [] });
+export const emptyHistory = (): DeckHistory => ({ totalReviews: 0, totalSessions: 0, knownReviews: 0, unsureReviews: 0, unknownReviews: 0, progress: {}, sessions: [] });
 
 // Known words remain available. Their recommended interval grows only after another successful review.
 export function reviewSchedule(rating: Rating, previousStreak: number, now: Date, previousDue?: Date) {
