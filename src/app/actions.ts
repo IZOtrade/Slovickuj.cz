@@ -66,9 +66,9 @@ export async function bulkImport(deckId: string, input: Array<{ en: string; cz: 
   return created;
 }
 
-export async function updateSettings(input: { mode: string; autoPlay: boolean; speechRate: number }) {
+export async function updateSettings(input: { mode: string; speechRate: number }) {
   const userId = await ownerId();
-  const settings = z.object({ mode: z.enum(["mix", "en_cz", "cz_en"]), autoPlay: z.boolean(), speechRate: z.number().min(0.8).max(1.1) }).parse(input);
+  const settings = z.object({ mode: z.enum(["mix", "en_cz", "cz_en"]), speechRate: z.number().min(0.5).max(1.5) }).parse(input);
   await prisma.userSettings.upsert({ where: { userId }, update: settings, create: { userId, ...settings } });
   revalidatePath("/");
 }

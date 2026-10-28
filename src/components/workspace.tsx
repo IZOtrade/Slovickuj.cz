@@ -3,14 +3,14 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { bulkImport, createDeck, createWord, deleteDeck, deleteWord, updateSettings, updateWord } from "@/app/actions";
 import { parseImport } from "@/lib/import-words";
+import { rateRound, roundCounts, retryIds, swipeRating, type Rating, type Round } from "@/lib/practice";
 
 type Word = { id: string; en: string; cz: string; category: string | null };
 type Deck = { id: string; title: string; description: string | null; words: Word[] };
 type Mode = "mix" | "en_cz" | "cz_en";
 type Tab = "study" | "decks" | "library" | "settings";
-type Settings = { mode: string; autoPlay: boolean; speechRate: number };
+type Settings = { mode: string; speechRate: number };
 type Props = { user: { name: string; email: string; image: string }; initialDecks: Deck[]; settings: Settings; signOut: () => Promise<void> };
-type Round = { ids: string[]; directions: Record<string, "en_cz" | "cz_en">; index: number; missed: string[]; flipped: boolean; done: boolean };
 type IconName = "cards" | "book" | "grid" | "plus" | "arrow" | "sound" | "settings" | "search" | "upload" | "download" | "check" | "close" | "edit" | "trash" | "exit" | "shuffle";
 const paths: Record<IconName, ReactNode> = {
   cards: <><rect x="6" y="4" width="13" height="17" rx="3"/><path d="M3 17V5a3 3 0 0 1 3-3h9M10 10h5m-5 4h3"/></>,
@@ -36,7 +36,8 @@ export function Workspace({ user, initialDecks, settings: saved, signOut }: Prop
   const [selectedId, setSelectedId] = useState(initialDecks[0]?.id ?? "");
   const [tab, setTab] = useState<Tab>("study");
   const [mode, setMode] = useState<Mode>(modes.some(m => m.value === saved.mode) ? saved.mode as Mode : "mix");
-  const [autoPlay, setAutoPlay] = useState(saved.autoPlay);
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [speaking, setSpeaking] = useState(false);
   const [speechRate, setSpeechRate] = useState(saved.speechRate);
   const [round, setRound] = useState<Round | null>(null);
   const [dialog, setDialog] = useState<"deck" | "word" | "import" | null>(null);
@@ -53,6 +54,8 @@ export function Workspace({ user, initialDecks, settings: saved, signOut }: Prop
   const categories = [...new Set(words.map(word => word.category).filter((value): value is string => !!value))];
   const filtered = words.filter(word => (!category || word.category === category) && `${word.en} ${word.cz} ${word.category ?? ""}`.toLocaleLowerCase("cs").includes(query.toLocaleLowerCase("cs")));
   const direction = current && round ? round.directions[current.id] : "en_cz";
+  const counts = roundCounts(round);
+  const retry = round ? retryIds(round) : [];
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, [tab]);
 
@@ -61,43 +64,65 @@ export function Workspace({ user, initialDecks, settings: saved, signOut }: Prop
     if (!ids.length) return;
     const shuffled = [...ids];
     for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]; }
-    setRound({ ids: shuffled, directions: Object.fromEntries(shuffled.map(id => [id, requestedMode === "mix" ? Math.random() < .5 ? "en_cz" : "cz_en" : requestedMode])), index: 0, missed: [], flipped: false, done: false });
+    setRound({ ids: shuffled, directions: Object.fromEntries(shuffled.map(id => [id, requestedMode === "mix" ? Math.random() < .5 ? "en_cz" : "cz_en" : requestedMode])), index: 0, answers: {}, flipped: false, done: false });
   }
-  function grade(known: boolean) {
-    setRound(previous => {
-      if (!previous || !previous.flipped || previous.done) return previous;
-      const missed = known ? previous.missed : [...previous.missed, previous.ids[previous.index]];
-      return previous.index + 1 === previous.ids.length ? { ...previous, missed, done: true } : { ...previous, missed, index: previous.index + 1, flipped: false };
-    });
+  function stopSpeech() {
+    speechRef.current = null;
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    setSpeaking(false);
   }
-  function speak(word: Word) {
+  function grade(rating: Rating) {
+    if (!round?.flipped || round.done) return;
+    stopSpeech();
+    setRound(previous => rateRound(previous, rating));
+  }
+  function speak(word: Pick<Word, "en">) {
     if (!("speechSynthesis" in window)) { setNotice("Tento prohlížeč nepodporuje výslovnost."); return; }
-    const utterance = new SpeechSynthesisUtterance(word.en.replace(/\(.*?\)/g, "").trim());
+    stopSpeech();
+    const utterance = new SpeechSynthesisUtterance(word.en.replace(/\(.*?\)/g, "").trim() || word.en);
     utterance.lang = "en-US"; utterance.rate = speechRate;
-    window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
+    const voices = window.speechSynthesis.getVoices();
+    const voice = voices.find(item => item.lang === "en-US") ?? voices.find(item => item.lang.startsWith("en"));
+    if (voice) utterance.voice = voice;
+    speechRef.current = utterance;
+    utterance.onstart = () => { if (speechRef.current === utterance) setSpeaking(true); };
+    utterance.onend = () => { if (speechRef.current === utterance) { speechRef.current = null; setSpeaking(false); } };
+    utterance.onerror = event => {
+      if (speechRef.current !== utterance) return;
+      speechRef.current = null; setSpeaking(false);
+      if (event.error !== "interrupted" && event.error !== "canceled") setNotice("Výslovnost se nepodařilo přehrát. Zkus tlačítko Výslovnost znovu.");
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+  function reveal() {
+    if (!current || !round || round.done) return;
+    // Speak directly inside the tap/key handler so mobile browsers retain user activation.
+    speak(current);
+    setRound(previous => previous && !previous.done ? { ...previous, flipped: true } : previous);
   }
   useEffect(() => {
-    if (round?.flipped && !round.done && autoPlay && current && "speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(current.en.replace(/\(.*?\)/g, "").trim());
-      utterance.lang = "en-US"; utterance.rate = speechRate;
-      window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
-    }
-  }, [round?.flipped, round?.done, autoPlay, current?.en, speechRate]);
+    setSpeaking(false);
+    return () => {
+      speechRef.current = null;
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
+  }, [tab, deck?.id, round?.ids]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (dialog || deletion || tab !== "study" || !round || round.done || (event.target as HTMLElement).closest("input, textarea, select, a")) return;
-      if (event.code === "Space" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); setRound(previous => previous ? { ...previous, flipped: !previous.flipped } : null); }
-      if (event.key === "1" || event.key === "ArrowLeft") { event.preventDefault(); grade(false); }
-      if (event.key === "2" || event.key === "ArrowRight") { event.preventDefault(); grade(true); }
+      if (event.code === "Space" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); reveal(); }
+      if (event.key === "1" || event.key === "ArrowLeft") { event.preventDefault(); grade("unknown"); }
+      if (event.key === "2" || event.key === "ArrowUp") { event.preventDefault(); grade("unsure"); }
+      if (event.key === "3" || event.key === "ArrowRight") { event.preventDefault(); grade("known"); }
     };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [dialog, deletion, tab, round]);
+  }, [dialog, deletion, tab, round, speechRate]);
   useEffect(() => { if (!notice) return; const timeout = setTimeout(() => setNotice(""), 5000); return () => clearTimeout(timeout); }, [notice]);
   async function run(action: () => Promise<void>) { setBusy(true); try { await action(); } catch (error) { setNotice(error instanceof Error ? error.message : "Uložení se nezdařilo. Zkus to znovu."); } finally { setBusy(false); } }
-  async function saveSettings(next: { mode: Mode; autoPlay: boolean; speechRate: number }) {
-    const previous = { mode, autoPlay, speechRate };
-    setMode(next.mode); setAutoPlay(next.autoPlay); setSpeechRate(next.speechRate); setRound(null);
-    await run(async () => { try { await updateSettings(next); setNotice("Nastavení uloženo."); } catch (error) { setMode(previous.mode); setAutoPlay(previous.autoPlay); setSpeechRate(previous.speechRate); throw error; } });
+  async function saveSettings(next: { mode: Mode; speechRate: number }) {
+    const previous = { mode, speechRate };
+    stopSpeech(); setMode(next.mode); setSpeechRate(next.speechRate); setRound(null);
+    await run(async () => { try { await updateSettings(next); setNotice("Nastavení uloženo."); } catch (error) { setMode(previous.mode); setSpeechRate(previous.speechRate); throw error; } });
   }
   const modeChips = <div className="chips" aria-label="Směr procvičování">{modes.map(item => <button key={item.value} className={`chip ${mode === item.value ? "is-active" : ""}`} aria-pressed={mode === item.value} onClick={() => { setMode(item.value); setRound(null); }}>{item.value === "mix" && <Icon name="shuffle"/>}{item.label}</button>)}</div>;
 
@@ -114,16 +139,17 @@ export function Workspace({ user, initialDecks, settings: saved, signOut }: Prop
         <div className="page-title"><div><p className="eyebrow">{tab === "study" ? "PÁR MINUT PRO TVOU ANGLIČTINU" : tab === "decks" ? "VŠECHNO MÁ SVÉ MÍSTO" : tab === "library" ? "TVOJE VLASTNÍ SLOVNÍ ZÁSOBA" : "PODLE TVÉHO TEMPA"}</p><h1>{tab === "study" ? "Jdeme na slovíčka." : tab === "decks" ? "Moje balíčky." : tab === "library" ? "Moje slovíčka." : "Nastavení."}</h1></div><div className="title-actions">{tab === "decks" ? <button className="button primary" onClick={() => setDialog("deck")}><Icon name="plus"/>Nový balíček</button> : tab !== "settings" && deck && <button className="button primary" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button>}</div></div>
         {tab !== "settings" && tab !== "decks" && decks.length > 0 && <div className="mobile-decks chips" aria-label="Vyber balíček">{decks.map(item => <button key={item.id} className={`chip ${deck?.id === item.id ? "is-active" : ""}`} aria-pressed={deck?.id === item.id} onClick={() => selectDeck(item.id)}>{item.title}<span className="count">{item.words.length}</span></button>)}</div>}
         {tab === "study" && <>
-          <div className="quick-stats"><div><Icon name="cards"/><strong>{words.length}</strong><span>v balíčku</span></div><div><Icon name="check"/><strong>{round ? round.index - round.missed.length + (round.done ? 1 : 0) : 0}</strong><span>umím v kole</span></div><div><Icon name="shuffle"/><strong>{round?.missed.length ?? 0}</strong><span>zopakovat</span></div></div>
+          <div className="quick-stats rating-stats" aria-label="Hodnocení v tomto kole"><div><Icon name="check"/><strong>{counts.known}</strong><span>vím</span></div><div><Icon name="shuffle"/><strong>{counts.unsure}</strong><span>tuším</span></div><div><Icon name="close"/><strong>{counts.unknown}</strong><span>nevím</span></div></div>
           {!deck ? <Empty title="Každé slovo se počítá." text="Vytvoř první balíček. Třeba Cestování, Práce nebo slova, která ti nejdou."><button className="button primary" onClick={() => setDialog("deck")}><Icon name="plus"/>Vytvořit balíček</button></Empty> : <>
             <div className="section-heading"><div><span className="tiny-label">PRÁVĚ PROCVIČUJEŠ</span><h2>{deck.title}</h2></div>{modeChips}</div>
-            {!words.length ? <Empty title="Tady to začíná." text="Přidej první slovíčko nebo rovnou nahraj celý seznam."><button className="button primary" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button><button className="button secondary" onClick={() => setDialog("import")}><Icon name="upload"/>Hromadný import</button></Empty> : !round ? <div className="study-start panel"><span className="study-art" aria-hidden="true"><span className="mini-flash back">hello.</span><span className="mini-flash front">ahoj.<span>↗</span></span></span><span className="tiny-label">MALÁ CHVILKA. VELKÝ ROZDÍL.</span><h2>Připraveno?<br/>Tak pojď na to.</h2><p>{wordCount(words.length)} · {mode === "mix" ? "oba směry na přeskáčku" : mode === "en_cz" ? "z angličtiny do češtiny" : "z češtiny do angličtiny"}</p><button className="button primary start-button" onClick={() => begin()}>Začít procvičovat<Icon name="arrow"/></button><span className="muted start-foot">Chyby se vrátí do dalšího kola. Bez spěchu.</span></div> : round.done ? <div className="round-result panel"><span className="result-icon"><Icon name={round.missed.length ? "shuffle" : "check"}/></span><span className="tiny-label">KOLO HOTOVO</span><h2>{round.missed.length ? "Ještě kousek." : "Tohle máš v hlavě!"}</h2><p>V tomto kole umíš <strong>{round.ids.length - round.missed.length} z {round.ids.length}</strong>.</p><div className="result-actions">{round.missed.length > 0 && <button className="button primary" onClick={() => begin(round.missed)}>Zopakovat {wordCount(round.missed.length)}<Icon name="arrow"/></button>}<button className={`button ${round.missed.length ? "secondary" : "primary"}`} onClick={() => begin()}>Celý balíček znovu<Icon name="shuffle"/></button></div></div> : current && <div className="practice-panel panel"><div className="practice-top"><span className="chip static-chip">{direction === "en_cz" ? "EN → CZ" : "CZ → EN"}</span><span className="round-count"><strong>{round.index + 1}</strong> / {round.ids.length}</span><button className="icon-button" aria-label="Spustit kolo znovu" onClick={() => begin()}><Icon name="shuffle"/></button></div><div className="progress-track" role="progressbar" aria-label="Průběh kola" aria-valuemin={0} aria-valuemax={round.ids.length} aria-valuenow={round.index}><span style={{ width: `${round.index / round.ids.length * 100}%` }}/></div><button className={`flashcard ${round.flipped ? "revealed" : ""}`} onClick={() => setRound(previous => previous ? {...previous,flipped:!previous.flipped} : null)}><span className="tiny-label">{round.flipped ? "SPRÁVNÁ ODPOVĚĎ" : "JAK TO ŘEKNEŠ?"}</span><span className="flash-word">{round.flipped ? direction === "cz_en" ? current.en : current.cz : direction === "cz_en" ? current.cz : current.en}</span>{current.category && <span className="chip static-chip word-tag">{current.category}</span>}<span className="flip-hint">{round.flipped ? "Kliknutím vrátíš zadání" : "Klepni pro odpověď"}<span aria-hidden="true">↻</span></span></button><div className="practice-bottom"><button className="chip" onClick={() => speak(current)}><Icon name="sound"/>Výslovnost</button><span className="keyboard-tip">Otočit <kbd>mezerník</kbd></span></div><div className="grade-actions"><button className="button grade-again" disabled={!round.flipped} onClick={() => grade(false)}><Icon name="close"/><span>Ještě jednou</span><kbd>1</kbd></button><button className="button grade-know" disabled={!round.flipped} onClick={() => grade(true)}><Icon name="check"/><span>Tohle umím</span><kbd>2</kbd></button></div></div>}
+            {!words.length ? <Empty title="Tady to začíná." text="Přidej první slovíčko nebo rovnou nahraj celý seznam."><button className="button primary" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button><button className="button secondary" onClick={() => setDialog("import")}><Icon name="upload"/>Hromadný import</button></Empty> : !round ? <div className="study-start panel"><span className="study-art" aria-hidden="true"><span className="mini-flash back">hello.</span><span className="mini-flash front">ahoj.<span>↗</span></span></span><span className="tiny-label">MALÁ CHVILKA. VELKÝ ROZDÍL.</span><h2>Připraveno?<br/>Tak pojď na to.</h2><p>{wordCount(words.length)} · {mode === "mix" ? "oba směry na přeskáčku" : mode === "en_cz" ? "z angličtiny do češtiny" : "z češtiny do angličtiny"}</p><button className="button primary start-button" onClick={() => begin()}>Začít procvičovat<Icon name="arrow"/></button><span className="muted start-foot">Klepni pro překlad a poslech. Pak zvol Nevím, Tuším nebo Vím.</span></div> : round.done ? <div className="round-result panel"><span className="result-icon"><Icon name={retry.length ? "shuffle" : "check"}/></span><span className="tiny-label">KOLO HOTOVO</span><h2>{retry.length ? "Ještě kousek." : "Tohle máš v hlavě!"}</h2><p>V tomto kole umíš <strong>{counts.known} z {round.ids.length}</strong>.</p><div className="result-rating-summary"><span>Nevím <strong>{counts.unknown}</strong></span><span>Tuším <strong>{counts.unsure}</strong></span><span>Vím <strong>{counts.known}</strong></span></div><div className="result-actions">{retry.length > 0 && <button className="button primary" onClick={() => begin(retry)}>Zopakovat {wordCount(retry.length)}<Icon name="arrow"/></button>}<button className={`button ${retry.length ? "secondary" : "primary"}`} onClick={() => begin()}>Celý balíček znovu<Icon name="shuffle"/></button></div></div> : current && <PracticeCard key={current.id} word={current} direction={direction} flipped={round.flipped} index={round.index} total={round.ids.length} speaking={speaking} onReveal={reveal} onSpeak={() => speak(current)} onGrade={grade} onRestart={() => {stopSpeech();begin();}}/>}
+
             <div className="study-tools"><button className="chip" onClick={() => setTab("library")}><Icon name="book"/>Zobrazit slovíčka</button><button className="chip" onClick={() => setDialog("import")}><Icon name="upload"/>Hromadný import</button></div>
           </>}
         </>}
         {tab === "decks" && <><div className="list-summary"><span><strong>{deckCount(decks.length)}</strong> · <strong>{wordCount(total)}</strong></span><Search value={deckQuery} onChange={setDeckQuery} placeholder="Najít balíček"/></div><div className="deck-grid">{decks.filter(item => `${item.title} ${item.description ?? ""}`.toLocaleLowerCase("cs").includes(deckQuery.toLocaleLowerCase("cs"))).map((item,i) => <article key={item.id} className={`deck-card panel ${item.id === deck?.id ? "is-selected" : ""}`}><div className="deck-card-top"><span className={`deck-art tone-${i % 3}`}><Icon name="cards"/></span><span className="tiny-label">{String(i+1).padStart(2,"0")} / BALÍČEK</span><button className="chip delete-deck" aria-label={`Smazat balíček ${item.title}`} disabled={busy} onClick={() => setDeletion({kind:"deck",deck:item})}><Icon name="trash"/><span>Smazat</span></button></div><h2>{item.title}</h2><p>{item.description || "Tvůj další kousek angličtiny."}</p><span className="chip static-chip">{wordCount(item.words.length)}</span><div className="deck-card-actions"><button className="button primary" onClick={() => {selectDeck(item.id);setTab("study");}}>Procvičovat<Icon name="arrow"/></button><button className="button secondary open-deck" aria-label={`Otevřít slovíčka: ${item.title}`} onClick={() => {selectDeck(item.id);setTab("library");}}><Icon name="book"/><span>Slovíčka</span></button></div></article>)}<button className="new-deck-card" onClick={() => setDialog("deck")}><span><Icon name="plus"/></span><strong>Další balíček</strong><small>Nové téma, nové možnosti.</small></button></div></>}
         {tab === "library" && (!deck ? <Empty title="Nejdřív vlastní balíček." text="Slovíčka tak budeš mít pěkně pohromadě."><button className="button primary" onClick={() => setDialog("deck")}><Icon name="plus"/>Vytvořit balíček</button></Empty> : <><div className="library-head"><div><h2>{deck.title}</h2><span className="muted">{wordCount(words.length)}</span></div><div className="chips"><button className="chip" onClick={() => setDialog("import")}><Icon name="upload"/>Import</button><button className="chip" disabled={!words.length} onClick={() => exportDeck(deck,"csv")}><Icon name="download"/>CSV</button><button className="chip" disabled={!words.length} onClick={() => exportDeck(deck,"json")}><Icon name="download"/>JSON</button></div></div><Search value={query} onChange={setQuery} placeholder="Hledat anglicky, česky nebo podle štítku…"/><div className="category-filters chips" aria-label="Filtrovat podle kategorie"><button className={`chip ${!category ? "is-active" : ""}`} aria-pressed={!category} onClick={() => setCategory("")}>Všechna<span className="count">{words.length}</span></button>{categories.map(value => <button className={`chip ${category === value ? "is-active" : ""}`} aria-pressed={category === value} key={value} onClick={() => setCategory(value)}>{value}</button>)}</div><div className="word-list panel"><div className="word-list-labels"><span>ANGLICKY</span><span>ČESKY</span><span>AKCE</span></div>{filtered.map(word => <WordItem key={word.id} word={word} disabled={busy} onSpeak={() => speak(word)} onSave={async value => {const updated=await updateWord(word.id,value);setDecks(previous => previous.map(item => item.id === deck.id ? {...item,words:item.words.map(old => old.id===word.id ? updated : old)} : item));setRound(null);setNotice("Slovíčko upraveno.");}} onDelete={() => setDeletion({kind:"word",deckId:deck.id,word})}/>)}{!filtered.length && <div className="table-empty"><Icon name={words.length ? "search" : "book"}/><h3>{words.length ? "Nic jsme nenašli." : "První slovo čeká na tebe."}</h3><p>{words.length ? "Zkus jiné hledání nebo jiný štítek." : "Přidej ho ručně nebo naimportuj celý seznam."}</p>{!words.length && <button className="chip is-active" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button>}</div>}</div><p className="list-foot">Zobrazeno {filtered.length} z {words.length} · Změny se automaticky ukládají.</p></>)}
-        {tab === "settings" && <div className="settings-stack"><section className="panel settings-panel"><div className="section-heading"><div><span className="tiny-label">PROCVIČOVÁNÍ</span><h2>Jak ti to vyhovuje?</h2></div><Icon name="cards"/></div><div className="setting-row"><div><strong>Výchozí směr</strong><p>Jak začnou tvoje další kola.</p></div><div className="chips">{modes.map(item => <button disabled={busy} className={`chip ${mode===item.value ? "is-active" : ""}`} aria-pressed={mode===item.value} key={item.value} onClick={() => void saveSettings({mode:item.value,autoPlay,speechRate})}>{item.label}</button>)}</div></div><div className="setting-row"><div><strong>Automatická výslovnost</strong><p>Přehrát anglický výraz po otočení.</p></div><button role="switch" aria-checked={autoPlay} aria-label="Automatická výslovnost" disabled={busy} className={`toggle ${autoPlay ? "on" : ""}`} onClick={() => void saveSettings({mode,autoPlay:!autoPlay,speechRate})}><span/></button></div><div className="setting-row"><div><strong>Rychlost hlasu</strong><p>Vyber si pohodlné tempo.</p></div><div className="chips">{[.8,.9,1,1.1].map(value => <button className={`chip ${speechRate===value ? "is-active" : ""}`} aria-pressed={speechRate===value} disabled={busy} key={value} onClick={() => void saveSettings({mode,autoPlay,speechRate:value})}>{value.toFixed(1)}×</button>)}</div></div></section><section className="panel settings-panel"><span className="tiny-label">TVŮJ ÚČET</span><div className="account-row"><span className="account-avatar">{user.name.slice(0,1)||"S"}</span><div><h2>{user.name || "Můj účet"}</h2><p className="muted">{user.email}</p></div><form action={signOut}><button className="chip" type="submit"><Icon name="exit"/>Odhlásit se</button></form></div><p className="account-note">Tvoje balíčky, slovíčka a nastavení patří jen tvému účtu.</p></section></div>}
+        {tab === "settings" && <div className="settings-stack"><section className="panel settings-panel"><div className="section-heading"><div><span className="tiny-label">PROCVIČOVÁNÍ</span><h2>Jak ti to vyhovuje?</h2></div><Icon name="cards"/></div><div className="setting-row"><div><strong>Výchozí směr</strong><p>Jak začnou tvoje další kola.</p></div><div className="chips">{modes.map(item => <button disabled={busy} className={`chip ${mode===item.value ? "is-active" : ""}`} aria-pressed={mode===item.value} key={item.value} onClick={() => void saveSettings({mode:item.value,speechRate})}>{item.label}</button>)}</div></div><div className="setting-row"><div><strong>Výslovnost po odkrytí</strong><p>Po klepnutí na kartičku se automaticky přečte anglický výraz.</p></div><span className="chip static-chip">Automaticky</span></div><div className="setting-row speech-setting"><div><strong>Rychlost výslovnosti</strong><p>Aktuálně {speechRate.toLocaleString("cs")}× · uloženo pro tvůj účet.</p></div><div className="speech-controls"><div className="chips speech-rates">{[.5,.65,.8,1,1.25,1.5].map(value => <button className={`chip ${speechRate===value ? "is-active" : ""}`} aria-pressed={speechRate===value} disabled={busy} key={value} onClick={() => void saveSettings({mode,speechRate:value})}>{value.toLocaleString("cs")}×</button>)}</div><button className="chip" onClick={() => speak({en:"Could you help me, please?"})}><Icon name="sound"/>Poslechnout ukázku</button></div></div></section><section className="panel settings-panel"><span className="tiny-label">TVŮJ ÚČET</span><div className="account-row"><span className="account-avatar">{user.name.slice(0,1)||"S"}</span><div><h2>{user.name || "Můj účet"}</h2><p className="muted">{user.email}</p></div><form action={signOut}><button className="chip" type="submit"><Icon name="exit"/>Odhlásit se</button></form></div><p className="account-note">Tvoje balíčky, slovíčka a nastavení patří jen tvému účtu.</p></section></div>}
         <footer className="app-footer"><span>SLOVÍČKUJ.CZ <span className="footer-dot">●</span> JEDNO SLOVO ZA DRUHÝM</span><nav aria-label="Informace o aplikaci"><a href="/soukromi">Soukromí</a><a href="/podminky">Podmínky</a></nav></footer>
       </main>
     </div>
@@ -146,6 +172,58 @@ export function Workspace({ user, initialDecks, settings: saved, signOut }: Prop
     {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="Zavřít oznámení" onClick={() => setNotice("")}><Icon name="close"/></button></div>}
     {busy && <div className="saving" role="status">Ukládám…</div>}
     {dialog && <Modal title={dialog === "deck" ? "Nový balíček" : dialog === "word" ? "Přidat slovíčko" : "Hromadný import"} onClose={() => setDialog(null)}>{dialog === "deck" ? <DeckForm onCancel={() => setDialog(null)} onSave={async (title,description) => {const created=await createDeck({title,description});setDecks(previous => [created,...previous]);selectDeck(created.id);setTab("library");setDialog(null);setNotice("Balíček vytvořen. Přidej první slovíčko.");}}/> : dialog === "word" ? <WordForm onCancel={() => setDialog(null)} onSave={async (en,cz,wordCategory) => {if(!deck)return;const created=await createWord(deck.id,{en,cz,category:wordCategory});setDecks(previous => previous.map(item => item.id===deck.id ? {...item,words:[...item.words,created]} : item));setRound(null);setDialog(null);setNotice("Slovíčko uloženo.");}}/> : <ImportForm onCancel={() => setDialog(null)} onSave={async text => {if(!deck)return;const created=await bulkImport(deck.id,parseImport(text));setDecks(previous => previous.map(item => item.id===deck.id ? {...item,words:[...item.words,...created]} : item));setRound(null);setDialog(null);setNotice(`Uloženo ${wordCount(created.length)}.`);}}/>}</Modal>}
+  </div>;
+}
+
+function PracticeCard({word,direction,flipped,index,total,speaking,onReveal,onSpeak,onGrade,onRestart}:{
+  word:Word;direction:"en_cz"|"cz_en";flipped:boolean;index:number;total:number;speaking:boolean;
+  onReveal:()=>void;onSpeak:()=>void;onGrade:(rating:Rating)=>void;onRestart:()=>void;
+}) {
+  const [drag,setDrag]=useState<{x:number;y:number}|null>(null);
+  const pointer=useRef<{id:number;x:number;y:number}|null>(null);
+  const suppressClick=useRef(false);
+  const source=direction==="en_cz"?word.en:word.cz;
+  const translation=direction==="en_cz"?word.cz:word.en;
+  const rating=drag?swipeRating(drag.x,drag.y):null;
+  const labels={unknown:"Nevím",unsure:"Tuším",known:"Vím"};
+  return <div className="practice-panel panel">
+    <div className="practice-top"><span className="chip static-chip">{direction==="en_cz"?"EN → CZ":"CZ → EN"}</span><span className="round-count"><strong>{index+1}</strong> / {total}</span><button className="icon-button" aria-label="Spustit kolo znovu" onClick={onRestart}><Icon name="shuffle"/></button></div>
+    <div className="progress-track" role="progressbar" aria-label="Průběh kola" aria-valuemin={0} aria-valuemax={total} aria-valuenow={index}><span style={{width:`${index/total*100}%`}}/></div>
+    <div className="swipe-legend" aria-hidden="true"><span>← Nevím</span><span>↑ Tuším</span><span>Vím →</span></div>
+    <button className={`flashcard miner-card ${flipped?"revealed":""} ${drag?"is-dragging":""} ${rating?`swipe-${rating}`:""}`}
+      aria-expanded={flipped} aria-label={flipped?`${source}. ${translation}. Přehrát anglickou výslovnost znovu.`:`${source}. Zobrazit překlad a přehrát anglickou výslovnost.`}
+      style={drag?{transform:`translate(${Math.max(-100,Math.min(100,drag.x))}px, ${Math.max(-80,Math.min(80,drag.y))}px) rotate(${Math.max(-5,Math.min(5,drag.x/25))}deg)`}:undefined}
+      onClick={()=>{if(suppressClick.current){suppressClick.current=false;return;}onReveal();}}
+      onPointerDown={event=>{
+        suppressClick.current=false;
+        if(!flipped||!event.isPrimary||event.button!==0)return;
+        pointer.current={id:event.pointerId,x:event.clientX,y:event.clientY};
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event=>{const start=pointer.current;if(start?.id===event.pointerId)setDrag({x:event.clientX-start.x,y:event.clientY-start.y});}}
+      onPointerUp={event=>{
+        const start=pointer.current;if(start?.id!==event.pointerId)return;
+        pointer.current=null;setDrag(null);
+        const dx=event.clientX-start.x,dy=event.clientY-start.y;
+        if(Math.hypot(dx,dy)>12)suppressClick.current=true;
+        const answer=swipeRating(dx,dy);if(answer)onGrade(answer);
+      }}
+      onPointerCancel={()=>{pointer.current=null;setDrag(null);}}
+      onLostPointerCapture={()=>{pointer.current=null;setDrag(null);}}>
+      {rating&&<span className={`swipe-feedback ${rating}`}>{labels[rating]}</span>}
+      <span className="tiny-label">{direction==="en_cz"?"ANGLICKY":"ČESKY"}</span>
+      <span className="flash-word" lang={direction==="en_cz"?"en":"cs"}>{source}</span>
+      {flipped&&<span className="flash-translation" lang={direction==="en_cz"?"cs":"en"}><span className="tiny-label">{direction==="en_cz"?"ČESKY":"ANGLICKY"}</span><span>{translation}</span></span>}
+      {word.category&&<span className="chip static-chip word-tag">{word.category}</span>}
+      <span className="flip-hint">{flipped?"Klepni pro poslech znovu":"Klepni pro překlad a poslech"}<Icon name={flipped?"sound":"cards"}/></span>
+    </button>
+    <div className="practice-bottom"><button className="chip" aria-label="Přehrát výslovnost" onClick={onSpeak}><Icon name="sound"/>{speaking?"Přehrávám…":"Výslovnost"}</button><span className="keyboard-tip">Překlad <kbd>mezerník</kbd></span><span className="sr-only" role="status">{speaking?"Přehrávám anglickou výslovnost.":""}</span></div>
+    <div className="grade-actions three-grades">
+      <button className="button grade-again" disabled={!flipped} onClick={()=>onGrade("unknown")}><Icon name="close"/><span>Nevím</span><kbd>1</kbd></button>
+      <button className="button grade-unsure" disabled={!flipped} onClick={()=>onGrade("unsure")}><span aria-hidden="true">?</span><span>Tuším</span><kbd>2</kbd></button>
+      <button className="button grade-know" disabled={!flipped} onClick={()=>onGrade("known")}><Icon name="check"/><span>Vím</span><kbd>3</kbd></button>
+    </div>
+    <p className="swipe-instructions">{flipped?"Táhni kartičku: ← nevím · ↑ tuším · vím →":"Nejdřív odkryj překlad. Potom zvol tlačítko nebo táhni kartičku."}</p>
   </div>;
 }
 

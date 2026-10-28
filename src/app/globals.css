@@ -77,3 +77,50 @@
   .app-footer nav a{display:inline-flex;align-items:center;min-height:44px}
 }
 @media(max-width:640px){.wordmark{min-height:44px}.toggle{width:64px;height:44px;border-radius:24px}.toggle>span{width:34px;height:34px;left:5px;top:5px}.toggle.on>span{transform:translateX(20px)}.toast button{width:44px;height:44px}.deck-card-actions>.button{flex-basis:120px}.deck-card-actions>.open-deck{flex-basis:auto}}
+
+/* Reveal, listen and rate with a tap or an intentional swipe. */
+.practice-panel{max-width:760px;margin-inline:auto;overflow:hidden}
+.swipe-legend{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 auto 12px;max-width:560px;font-size:10px;font-weight:800;color:#8b94a3;text-align:center}
+.swipe-legend>span:first-child{color:#d3444e;text-align:left}
+.swipe-legend>span:nth-child(2){color:#a36b16}
+.swipe-legend>span:last-child{color:#228465;text-align:right}
+.miner-card{position:relative;max-width:560px;margin-inline:auto;min-height:270px;padding:25px 24px 20px;touch-action:pan-y;user-select:none;transition:transform .18s,background .15s,border-color .15s}
+.miner-card.revealed{touch-action:none;background:#fff;border-color:#efc9cc}
+.miner-card.is-dragging{transition:none;cursor:grabbing}
+.miner-card .flash-word{font-size:clamp(23px,3vw,35px);letter-spacing:-.7px;margin:14px 0;line-height:1.3}
+.flash-translation{display:flex;flex-direction:column;gap:10px;padding:18px 0 8px;margin:2px 0 14px;border-top:1px solid #f0dfe1;width:100%;color:var(--red-dark);font-size:clamp(21px,2.6vw,30px);line-height:1.35;font-weight:800;overflow-wrap:anywhere;letter-spacing:-.4px}
+.flash-translation .tiny-label{letter-spacing:1.2px;font-weight:800;color:#a56b70}
+.miner-card .flip-hint{margin-top:15px}
+.miner-card .flip-hint .icon{width:15px;height:15px}
+.miner-card.swipe-unknown{background:#fff0f1;border-color:#ef8089}
+.miner-card.swipe-unsure{background:#fff8e8;border-color:#e7c26d}
+.miner-card.swipe-known{background:#edf9f2;border-color:#82c7a7}
+.swipe-feedback{position:absolute;top:12px;right:12px;padding:5px 12px;border:2px solid currentColor;border-radius:9px;font-weight:900;font-size:15px;background:#fff;transform:rotate(5deg)}
+.swipe-feedback.unknown{color:#c63643}.swipe-feedback.unsure{color:#a36b16}.swipe-feedback.known{color:#228465}
+.three-grades{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.three-grades .grade-again{background:#fff0f1;color:#c03442}
+.three-grades .grade-again:hover{background:#ffe0e4}
+.grade-unsure{background:#fff4da;color:#96600e}
+.grade-unsure:hover{background:#ffebbd}
+.three-grades .grade-know{background:#e7f5ed;color:#187c53}
+.three-grades .grade-know:hover{background:#d2eedf}
+.swipe-instructions{text-align:center;font-size:10px;line-height:1.6;color:var(--muted);margin-top:12px}
+.rating-stats>div:first-child strong{color:#228465}.rating-stats>div:nth-child(2) strong{color:#b2791f}.rating-stats>div:nth-child(3) strong{color:#d3444e}
+.result-rating-summary{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:15px}
+.result-rating-summary>span{padding:7px 12px;border-radius:9px;background:#f5f6f9;font-size:11px;color:var(--muted)}
+.result-rating-summary strong{margin-left:5px;color:var(--ink)}
+.speech-controls{display:grid;gap:12px;min-width:260px}
+.speech-rates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.speech-rates .chip{min-height:44px}
+@media(max-width:640px){
+  .miner-card{min-height:235px;padding:20px 15px 17px}
+  .miner-card .flash-word{font-size:25px;margin:12px 0}
+  .flash-translation{font-size:23px;padding-top:14px;margin-bottom:12px}
+  .swipe-legend{margin-bottom:9px;font-size:9px}
+  .three-grades{gap:6px}
+  .three-grades .button{padding:10px 7px;gap:5px;font-size:11px;min-height:48px}
+  .three-grades .icon{width:14px;height:14px}
+  .swipe-instructions{font-size:9px;margin-top:10px}
+  .speech-controls{width:100%;min-width:0}
+  .speech-setting{gap:12px}
+}
