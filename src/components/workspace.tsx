@@ -1,188 +1,157 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { bulkImport, createDeck, createWord, deleteDeck, deleteWord, updateSettings, updateWord } from "@/app/actions";
+import { parseImport } from "@/lib/import-words";
 
 type Word = { id: string; en: string; cz: string; category: string | null };
 type Deck = { id: string; title: string; description: string | null; words: Word[] };
+type Mode = "mix" | "en_cz" | "cz_en";
+type Tab = "study" | "decks" | "library" | "settings";
 type Settings = { mode: string; autoPlay: boolean; speechRate: number };
 type Props = { user: { name: string; email: string; image: string }; initialDecks: Deck[]; settings: Settings; signOut: () => Promise<void> };
-type Mode = "mix" | "en_cz" | "cz_en";
-type Tab = "study" | "library" | "settings";
+type Round = { ids: string[]; directions: Record<string, "en_cz" | "cz_en">; index: number; missed: string[]; flipped: boolean; done: boolean };
+type IconName = "cards" | "book" | "grid" | "plus" | "arrow" | "sound" | "settings" | "search" | "upload" | "download" | "check" | "close" | "edit" | "trash" | "exit" | "shuffle";
+const paths: Record<IconName, ReactNode> = {
+  cards: <><rect x="6" y="4" width="13" height="17" rx="3"/><path d="M3 17V5a3 3 0 0 1 3-3h9M10 10h5m-5 4h3"/></>,
+  book: <path d="M12 5v15M3 4h5a4 4 0 0 1 4 2 4 4 0 0 1 4-2h5v15h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3z"/>,
+  grid: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
+  plus: <path d="M12 5v14M5 12h14"/>, arrow: <path d="M4 12h16m-6-6 6 6-6 6"/>,
+  sound: <path d="m11 4-6 5H2v6h3l6 5zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>,
+  settings: <><path d="m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-1 3 2 3-2 3 1 2-3-1-3 2-2-2-3-3-1-1-3z"/><circle cx="12" cy="11" r="3"/></>,
+  search: <><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></>,
+  upload: <path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/>, download: <path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4"/>,
+  check: <path d="m5 12 4 4L19 6"/>, close: <path d="m6 6 12 12M6 18 18 6"/>, edit: <path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14z"/>,
+  trash: <path d="M3 6h18M8 6V3h8v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>, exit: <path d="M10 4H4v16h6m3-13 5 5-5 5m-5-5h13"/>,
+  shuffle: <path d="M3 6h3l12 12h3m-4-4 4 4-4 4M3 18h3l4-4m4-4 4-4h3m-4-4 4 4-4 4"/>,
+};
+function Icon({ name }: { name: IconName }) { return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>; }
+const nav: { tab: Tab; label: string; icon: IconName }[] = [{ tab: "study", label: "Procvičovat", icon: "cards" }, { tab: "decks", label: "Balíčky", icon: "grid" }, { tab: "library", label: "Slovíčka", icon: "book" }];
+const modes: { value: Mode; label: string }[] = [{ value: "en_cz", label: "EN → CZ" }, { value: "mix", label: "Mix" }, { value: "cz_en", label: "CZ → EN" }];
+const wordCount = (n: number) => `${n} ${n === 1 ? "slovíčko" : n >= 2 && n <= 4 ? "slovíčka" : "slovíček"}`;
 
-const icons = { grid: "▦", book: "▤", sound: "◖))" };
-
-export function Workspace({ user, initialDecks, settings: savedSettings, signOut }: Props) {
+export function Workspace({ user, initialDecks, settings: saved, signOut }: Props) {
   const [decks, setDecks] = useState(initialDecks);
   const [selectedId, setSelectedId] = useState(initialDecks[0]?.id ?? "");
   const [tab, setTab] = useState<Tab>("study");
-  const [mode, setMode] = useState<Mode>((savedSettings.mode as Mode) || "mix");
-  const [directions, setDirections] = useState<Record<string, Exclude<Mode, "mix">>>({});
-  const [autoPlay, setAutoPlay] = useState(savedSettings.autoPlay);
-  const [speechRate, setSpeechRate] = useState(savedSettings.speechRate);
+  const [mode, setMode] = useState<Mode>(modes.some(m => m.value === saved.mode) ? saved.mode as Mode : "mix");
+  const [autoPlay, setAutoPlay] = useState(saved.autoPlay);
+  const [speechRate, setSpeechRate] = useState(saved.speechRate);
+  const [round, setRound] = useState<Round | null>(null);
+  const [dialog, setDialog] = useState<"deck" | "word" | "import" | null>(null);
   const [query, setQuery] = useState("");
-  const [round, setRound] = useState<string[]>([]);
-  const [missed, setMissed] = useState<string[]>([]);
-  const [index, setIndex] = useState(0);
-  const [flipped, setFlipped] = useState(false);
-  const [roundDone, setRoundDone] = useState(false);
+  const [category, setCategory] = useState("");
+  const [deckQuery, setDeckQuery] = useState("");
   const [notice, setNotice] = useState("");
-  const [pending, startTransition] = useTransition();
-  const [deckDialog, setDeckDialog] = useState(false);
-  const [wordDialog, setWordDialog] = useState(false);
-  const [importDialog, setImportDialog] = useState(false);
-  const [wordSearch, setWordSearch] = useState("");
-
-  const deck = decks.find((item) => item.id === selectedId) ?? decks[0];
+  const [busy, setBusy] = useState(false);
+  const deck = decks.find(item => item.id === selectedId) ?? decks[0];
   const words = deck?.words ?? [];
-  const queue = round.length ? round : words.map((word) => word.id);
-  const currentWord = words.find((word) => word.id === queue[index]);
-  const currentDirection = currentWord ? (mode === "mix" ? directions[currentWord.id] ?? "en_cz" : mode) : "en_cz";
-  const filteredWords = useMemo(() => words.filter((word) => `${word.en} ${word.cz} ${word.category ?? ""}`.toLocaleLowerCase("cs").includes(wordSearch.toLocaleLowerCase("cs"))), [words, wordSearch]);
-  const allWordsCount = decks.reduce((sum, item) => sum + item.words.length, 0);
+  const total = decks.reduce((sum, item) => sum + item.words.length, 0);
+  const current = round ? words.find(word => word.id === round.ids[round.index]) : undefined;
+  const categories = [...new Set(words.map(word => word.category).filter((value): value is string => !!value))];
+  const filtered = words.filter(word => (!category || word.category === category) && `${word.en} ${word.cz} ${word.category ?? ""}`.toLocaleLowerCase("cs").includes(query.toLocaleLowerCase("cs")));
+  const direction = current && round ? round.directions[current.id] : "en_cz";
 
-  function speak(word: Word) {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    const text = word.en.replace(/\(.*?\)/g, "").trim();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = speechRate;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+  function selectDeck(id: string) { setSelectedId(id); setRound(null); setCategory(""); setQuery(""); }
+  function begin(ids = words.map(word => word.id), requestedMode = mode) {
+    if (!ids.length) return;
+    const shuffled = [...ids];
+    for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]; }
+    setRound({ ids: shuffled, directions: Object.fromEntries(shuffled.map(id => [id, requestedMode === "mix" ? Math.random() < .5 ? "en_cz" : "cz_en" : requestedMode])), index: 0, missed: [], flipped: false, done: false });
   }
-
-  useEffect(() => {
-    if (flipped && autoPlay && currentWord) speak(currentWord);
-  }, [flipped, currentWord?.id, autoPlay]);
-
-  function startRound(ids = words.map((word) => word.id), requestedMode: Mode = mode) {
-    setRound([...ids].sort(() => Math.random() - 0.5));
-    setDirections(Object.fromEntries(ids.map((id) => [id, requestedMode === "mix" ? (Math.random() > 0.5 ? "en_cz" : "cz_en") : requestedMode])));
-    setMissed([]); setIndex(0); setFlipped(false); setRoundDone(false);
-  }
-
   function grade(known: boolean) {
-    if (!currentWord) return;
-    const nextMissed = known ? missed : [...missed, currentWord.id];
-    setMissed(nextMissed);
-    if (index + 1 >= queue.length) { setRoundDone(true); setRound(queue); }
-    else { setIndex(index + 1); setFlipped(false); }
+    setRound(previous => {
+      if (!previous || !previous.flipped || previous.done) return previous;
+      const missed = known ? previous.missed : [...previous.missed, previous.ids[previous.index]];
+      return previous.index + 1 === previous.ids.length ? { ...previous, missed, done: true } : { ...previous, missed, index: previous.index + 1, flipped: false };
+    });
   }
-
-  async function addDeck(title: string, description: string) {
-    const created = await createDeck({ title, description });
-    setDecks((current) => [created as Deck, ...current]); setSelectedId(created.id); setTab("study"); setDeckDialog(false); setNotice("Balíček je připravený.");
+  function speak(word: Word) {
+    if (!("speechSynthesis" in window)) { setNotice("Tento prohlížeč nepodporuje výslovnost."); return; }
+    const utterance = new SpeechSynthesisUtterance(word.en.replace(/\(.*?\)/g, "").trim());
+    utterance.lang = "en-US"; utterance.rate = speechRate;
+    window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
   }
-  async function addWord(en: string, cz: string, category: string) {
-    if (!deck) return;
-    const created = await createWord(deck.id, { en, cz, category });
-    setDecks((current) => current.map((item) => item.id === deck.id ? { ...item, words: [...item.words, created as Word] } : item));
-    setWordDialog(false); setNotice("Slovíčko přidáno.");
+  useEffect(() => {
+    if (round?.flipped && !round.done && autoPlay && current && "speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(current.en.replace(/\(.*?\)/g, "").trim());
+      utterance.lang = "en-US"; utterance.rate = speechRate;
+      window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance);
+    }
+  }, [round?.flipped, round?.done, autoPlay, current?.en, speechRate]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (dialog || tab !== "study" || !round || round.done || (event.target as HTMLElement).closest("input, textarea, select, a")) return;
+      if (event.code === "Space" && !(event.target as HTMLElement).closest("button")) { event.preventDefault(); setRound(previous => previous ? { ...previous, flipped: !previous.flipped } : null); }
+      if (event.key === "1" || event.key === "ArrowLeft") { event.preventDefault(); grade(false); }
+      if (event.key === "2" || event.key === "ArrowRight") { event.preventDefault(); grade(true); }
+    };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [dialog, tab, round]);
+  useEffect(() => { if (!notice) return; const timeout = setTimeout(() => setNotice(""), 5000); return () => clearTimeout(timeout); }, [notice]);
+  async function run(action: () => Promise<void>) { setBusy(true); try { await action(); } catch (error) { setNotice(error instanceof Error ? error.message : "Uložení se nezdařilo. Zkus to znovu."); } finally { setBusy(false); } }
+  async function saveSettings(next: { mode: Mode; autoPlay: boolean; speechRate: number }) {
+    const previous = { mode, autoPlay, speechRate };
+    setMode(next.mode); setAutoPlay(next.autoPlay); setSpeechRate(next.speechRate); setRound(null);
+    await run(async () => { try { await updateSettings(next); setNotice("Nastavení uloženo."); } catch (error) { setMode(previous.mode); setAutoPlay(previous.autoPlay); setSpeechRate(previous.speechRate); throw error; } });
   }
-  async function importWords(text: string) {
-    if (!deck) return;
-    const parsed = parseImport(text);
-    if (!parsed.length) { setNotice("V textu jsem nenašel žádné platné řádky."); return; }
-    const localRows = await bulkImport(deck.id, parsed);
-    setDecks((current) => current.map((item) => item.id === deck.id ? { ...item, words: [...item.words, ...localRows] } : item));
-    setImportDialog(false); setNotice(`Přidáno ${localRows.length} slovíček.`);
-  }
+  const modeChips = <div className="chips" aria-label="Směr procvičování">{modes.map(item => <button key={item.value} className={`chip ${mode === item.value ? "is-active" : ""}`} aria-pressed={mode === item.value} onClick={() => { setMode(item.value); setRound(null); }}>{item.value === "mix" && <Icon name="shuffle"/>}{item.label}</button>)}</div>;
 
-  return <div className="app-shell" onKeyDown={(event) => {
-    if (tab !== "study" || !currentWord || (event.target as HTMLElement).matches("input, textarea, button")) return;
-    if (event.code === "Space") { event.preventDefault(); setFlipped((value) => !value); }
-    if (flipped && event.key === "ArrowLeft") grade(false);
-    if (flipped && event.key === "ArrowRight") grade(true);
-    if (flipped && event.key === "1") grade(false);
-    if (flipped && event.key === "2") grade(true);
-  }} tabIndex={-1}>
-    <aside className="sidebar">
-      <a className="brand" href="#"><span className="brand-mark small">S<span>.</span></span><span>slovickuj<span className="brand-dot">.cz</span></span></a>
-      <div className="side-label">TVŮJ PROSTOR</div>
-      <nav className="side-nav">
-        <button className={tab === "study" ? "active" : ""} onClick={() => setTab("study")}><span className="nav-icon">◉</span> Procvičování</button>
-        <button className={tab === "library" ? "active" : ""} onClick={() => setTab("library")}><span className="nav-icon">▤</span> Moje slovíčka</button>
-      </nav>
-      <div className="side-label deck-label">BALÍČKY <button aria-label="Přidat balíček" onClick={() => setDeckDialog(true)}>+</button></div>
-      <div className="deck-nav">
-        {decks.map((item, i) => <button key={item.id} className={item.id === deck?.id ? "chosen" : ""} onClick={() => { setSelectedId(item.id); setRound([]); setIndex(0); setRoundDone(false); }}><span className={`deck-dot dot-${i % 4}`} />{item.title}<span className="deck-count">{item.words.length}</span></button>)}
-        {decks.length === 0 && <p className="empty-sidebar">Zatím tu nic není.<br />Vytvoř si první balíček.</p>}
-        <button className="new-deck" onClick={() => setDeckDialog(true)}><span className="nav-icon">＋</span> Nový balíček</button>
-      </div>
-      <div className="sidebar-bottom">
-        <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}><span className="nav-icon">⚙</span> Nastavení</button>
-        <div className="user-card"><div className="avatar">{user.image ? <img src={user.image} alt="" /> : user.name.slice(0, 1).toUpperCase() || "S"}</div><div className="user-lines"><strong>{user.name || "Učící se"}</strong><span>{user.email}</span></div><form action={signOut}><button className="signout" title="Odhlásit se">↗</button></form></div>
-      </div>
-    </aside>
-
-    <main className="main-content">
-      <header className="topbar"><div className="breadcrumbs"><span>Můj prostor</span><span className="crumb-sep">/</span><strong>{tab === "settings" ? "Nastavení" : tab === "library" ? "Moje slovíčka" : deck?.title ?? "Přehled"}</strong></div><div className="topbar-right"><span className="streak"><span>✳</span> Uč se svým tempem</span><div className="top-avatar">{user.image ? <img src={user.image} alt="" /> : user.name.slice(0, 1).toUpperCase() || "S"}</div></div></header>
-
-      {tab === "study" && <section className="page-content">
-        <div className="page-heading"><div><p className="eyebrow">TVŮJ KLIDNÝ KOUTEK PRO ANGLIČTINU</p><h1>Dobrá práce začíná<br /><em>jedním slovíčkem.</em></h1></div><span className="heading-flower">✳</span></div>
-        <div className="overview-grid">
-          <article className="overview-card card-progress"><div className="card-topline"><span>CELKEM SLOVÍČEK</span><span className="tiny-spark">↗</span></div><div className="big-number">{allWordsCount}<span> slovíček</span></div><div className="mini-rule"><span style={{ width: `${allWordsCount ? 45 : 0}%` }} /></div><div className="card-caption">Každé opakování se počítá.</div></article>
-          <article className="overview-card card-decks"><div className="card-topline"><span>TVÉ BALÍČKY</span><span className="tiny-grid">▦</span></div><div className="big-number">{decks.length}<span> balíčků</span></div><div className="card-caption">Každý má svůj příběh.</div></article>
-          <article className="quote-card"><span className="quote-star">✳</span><p>Consistency<br />over intensity.</p><small>· MALÝ KROK JE TAKY KROK ·</small></article>
-        </div>
-
-        <div className="section-title-row"><div><p className="eyebrow">VYBER SI, CO SI DNES OPAKUJEŠ</p><h2>Tvoje balíčky</h2></div><button className="quiet-button" onClick={() => setDeckDialog(true)}>＋ Nový balíček</button></div>
-        {decks.length === 0 ? <div className="empty-state"><div className="empty-illustration">✳</div><h3>Začni jedním malým balíčkem.</h3><p>Přidej pár slovíček, která chceš mít po ruce. Zbytek už půjde samo.</p><button className="primary-button" onClick={() => setDeckDialog(true)}>Vytvořit první balíček <span>→</span></button></div> : <div className="deck-cards">{decks.map((item, i) => <article className={`deck-card deck-card-${i % 4}`} key={item.id} onClick={() => setSelectedId(item.id)}><div className="deck-card-head"><span className={`deck-symbol symbol-${i % 4}`}>{["✳", "◒", "↗", "⌘"][i % 4]}</span><button className="more-button" aria-label={`Možnosti balíčku ${item.title}`} onClick={(e) => { e.stopPropagation(); if (window.confirm(`Smazat balíček „${item.title}“ i se všemi slovíčky?`)) startTransition(async () => { await deleteDeck(item.id); setDecks((current) => current.filter((entry) => entry.id !== item.id)); if (selectedId === item.id) setSelectedId(decks.find((entry) => entry.id !== item.id)?.id ?? ""); }); }}>···</button></div><div className="deck-meta">BALÍČEK · {String(i + 1).padStart(2, "0")}</div><h3>{item.title}</h3><p>{item.description || "Pár slovíček pro další malý pokrok."}</p><div className="deck-card-bottom"><span><strong>{item.words.length}</strong> slovíček</span><button onClick={(e) => { e.stopPropagation(); setSelectedId(item.id); setTab("study"); startRound(item.words.map((word) => word.id)); }}>Procvičit <span>→</span></button></div></article>)}</div>}
-
-        {deck && deck.words.length > 0 && <div className="trainer-wrap"><div className="section-title-row trainer-heading"><div><p className="eyebrow">MALÉ KOLO, VELKÝ POKROK</p><h2>Procvičit {deck.title}</h2></div><div className="mode-pills"><button className={mode === "en_cz" ? "selected" : ""} onClick={() => { setMode("en_cz"); startRound(words.map((word) => word.id), "en_cz"); }}>EN → CZ</button><button className={mode === "mix" ? "selected" : ""} onClick={() => { setMode("mix"); startRound(words.map((word) => word.id), "mix"); }}>Mix</button><button className={mode === "cz_en" ? "selected" : ""} onClick={() => { setMode("cz_en"); startRound(words.map((word) => word.id), "cz_en"); }}>CZ → EN</button></div></div>
-          {roundDone ? <div className="result-card"><span className="result-star">✳</span><p className="eyebrow">KOLO DOKONČENO</p><h3>{missed.length === 0 ? "Všechna slovíčka máš." : `Umíš ${words.length - missed.length} z ${words.length} slovíček.`}</h3><p>{missed.length === 0 ? "Skvělá práce. Dej si chvilku a vrať se zase zítra." : `Zbylo ${missed.length} ${missed.length === 1 ? "slovíčko" : "slovíček"} k procvičení. Každým kolem to půjde lépe.`}</p><div className="result-actions">{missed.length > 0 && <button className="primary-button" onClick={() => startRound(missed)}>Procvičit zbývající slovíčka <span>→</span></button>}<button className="quiet-button" onClick={() => startRound()}>Začít celé kolo znovu</button></div></div> : <div className="trainer-card"><div className="trainer-progress"><div className="progress-copy"><span>{deck.title}</span><span>{index + (queue.length ? 1 : 0)} <i>/</i> {queue.length}</span></div><div className="progress-track"><span style={{ width: `${queue.length ? ((index + 1) / queue.length) * 100 : 0}%` }} /></div></div>{currentWord ? <div className={`flash-card ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((value) => !value)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") setFlipped((value) => !value); }}><div className="flash-top"><span className="direction-tag">{currentDirection === "en_cz" ? "EN → CZ" : "CZ → EN"}</span>{currentWord.category && <span className="category-tag">{currentWord.category}</span>}</div><div className="flash-main"><span className="flash-label">{flipped ? "SPRÁVNÁ ODPOVĚĎ" : "JAK TO ŘEKNEŠ?"}</span><h3>{flipped ? (currentDirection === "cz_en" ? currentWord.en : currentWord.cz) : (currentDirection === "cz_en" ? currentWord.cz : currentWord.en)}</h3>{flipped && <div className="answer-actions"><button className="sound-button" aria-label="Přehrát výslovnost" onClick={(e) => { e.stopPropagation(); speak(currentWord); }}>{icons.sound}</button></div>}</div><div className="flash-bottom"><span>{flipped ? "Zkus si slovo říct nahlas." : "Klikni nebo stiskni mezerník pro otočení."}</span><span className="flash-orbit">✳</span></div></div> : <div className="flash-card empty-flash"><div className="flash-main"><span className="flash-label">TADY TO ZAČÍNÁ</span><h3>Přidej první slovíčko.</h3><button className="quiet-button" onClick={() => setWordDialog(true)}>＋ Přidat slovíčko</button></div></div>}{currentWord && <div className={`grade-actions ${flipped ? "ready" : ""}`}><button className="grade-button forgot" disabled={!flipped} onClick={() => grade(false)}><span>×</span><span>Nevím <small>← · 1</small></span></button><button className="grade-button know" disabled={!flipped} onClick={() => grade(true)}><span>✓</span><span>Vím <small>→ · 2</small></span></button></div>}<div className="trainer-help">{icons.book} Počítá se každý pokus. Chyby se vrátí v dalším kole.</div></div>}
-        </div>}
-      </section>}
-
-      {tab === "library" && <section className="page-content library-page"><div className="section-title-row"><div><p className="eyebrow">TVOJE SLOVNÍ ZÁSOBA NA JEDNOM MÍSTĚ</p><h1>Moje slovíčka</h1></div><div className="library-actions"><button className="quiet-button" onClick={() => setImportDialog(true)}>↑ Hromadný import</button><button className="primary-button" onClick={() => setWordDialog(true)}>＋ Přidat slovíčko</button></div></div><div className="library-toolbar"><select value={deck?.id ?? ""} onChange={(e) => setSelectedId(e.target.value)} aria-label="Vyber balíček">{decks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select><label className="search-box"><span>⌕</span><input value={wordSearch} onChange={(e) => setWordSearch(e.target.value)} placeholder="Hledat anglicky, česky nebo podle štítku…" /></label><button className="export-button" onClick={() => exportDeck(deck, "csv")}>↓ Export CSV</button><button className="export-button" onClick={() => exportDeck(deck, "json")}>↓ JSON</button></div>{!deck ? <div className="empty-state"><h3>Zatím nemáš žádný balíček.</h3><button className="primary-button" onClick={() => setDeckDialog(true)}>Vytvořit balíček →</button></div> : <div className="word-table-wrap"><table className="word-table"><thead><tr><th>ANGLICKY</th><th>ČESKY</th><th>KATEGORIE</th><th /></tr></thead><tbody>{filteredWords.map((word) => <WordRow key={word.id} word={word} onSave={async (value) => { const updated = await updateWord(word.id, value); setDecks((current) => current.map((item) => item.id === deck.id ? { ...item, words: item.words.map((old) => old.id === word.id ? updated as Word : old) } : item)); }} onDelete={async () => { await deleteWord(word.id); setDecks((current) => current.map((item) => item.id === deck.id ? { ...item, words: item.words.filter((old) => old.id !== word.id) } : item)); }} />)}</tbody></table>{filteredWords.length === 0 && <div className="table-empty">{words.length ? "Zkus jiné hledání." : "V tomhle balíčku zatím nic není."}</div>}</div>}</section>}
-
-      {tab === "settings" && <section className="page-content settings-page"><div className="section-title-row"><div><p className="eyebrow">TAK, JAK TI TO VYHOVUJE</p><h1>Nastavení</h1></div></div><div className="settings-card"><div className="settings-intro"><div className="setting-icon">◉</div><div><h3>Jak chceš procvičovat?</h3><p>Vyber směr překladu, který ti sedí nejvíc.</p></div></div><div className="settings-options">{([["mix", "Mix 50/50", "Směr se u každé kartičky náhodně střídá."], ["en_cz", "Angličtina → čeština", "Nejdřív si vybavíš český význam."], ["cz_en", "Čeština → angličtina", "Procvičíš si aktivní vybavování slov."]] as const).map(([value, label, detail]) => <button key={value} className={`setting-choice ${mode === value ? "checked" : ""}`} onClick={() => { setMode(value); startTransition(async () => { await updateSettings({ mode: value, autoPlay, speechRate }); }); }}><span className="radio-mark" /><span><strong>{label}</strong><small>{detail}</small></span></button>)}</div><div className="setting-separator" /><div className="setting-row"><div><strong>Automatická výslovnost</strong><small>Přehrát anglické slovíčko po otočení kartičky.</small></div><button className={`switch ${autoPlay ? "on" : ""}`} role="switch" aria-checked={autoPlay} onClick={() => { const next = !autoPlay; setAutoPlay(next); startTransition(async () => { await updateSettings({ mode, autoPlay: next, speechRate }); }); }}><span /></button></div><div className="setting-row rate-row"><div><strong>Rychlost hlasu</strong><small>{speechRate.toFixed(1)}× · Příjemné tempo na poslech i opakování.</small></div><input type="range" min="0.8" max="1.1" step="0.1" value={speechRate} onChange={(e) => setSpeechRate(Number(e.target.value))} onMouseUp={() => startTransition(async () => { await updateSettings({ mode, autoPlay, speechRate }); })} onTouchEnd={() => startTransition(async () => { await updateSettings({ mode, autoPlay, speechRate }); })} /></div></div><div className="settings-note"><span>✳</span><p>Nastavení se ukládá jen pro tvůj účet.</p></div></section>}
-      <footer className="app-footer"><span>Malý krok. Velký pokrok. <span className="footer-star">✳</span></span><span>SLOVICKUJ.CZ · 2026</span></footer>
-    </main>
-    {notice && <div className="toast" role="status">{notice}<button onClick={() => setNotice("")}>×</button></div>}
-    {pending && <div className="saving-indicator">Ukládám…</div>}
-    {deckDialog && <Modal title="Nový balíček" onClose={() => setDeckDialog(false)}><DeckForm onSave={addDeck} onCancel={() => setDeckDialog(false)} /></Modal>}
-    {wordDialog && <Modal title="Přidat slovíčko" onClose={() => setWordDialog(false)}><WordForm onSave={addWord} onCancel={() => setWordDialog(false)} /></Modal>}
-    {importDialog && <Modal title="Hromadný import" onClose={() => setImportDialog(false)}><ImportForm onImport={importWords} onCancel={() => setImportDialog(false)} /></Modal>}
+  return <div className="workspace">
+    <a className="skip-link" href="#main">Přeskočit na obsah</a>
+    <header className="app-header"><div className="header-inner">
+      <button className="wordmark" aria-label="Slovickuj.cz – procvičování" onClick={() => setTab("study")}><span className="logo-mark">s.</span><span>SLOVÍČKUJ<span className="brand-domain">.CZ</span></span></button>
+      <nav className="desktop-nav" aria-label="Hlavní navigace">{nav.map(item => <button key={item.tab} aria-current={tab === item.tab ? "page" : undefined} className={tab === item.tab ? "active" : ""} onClick={() => setTab(item.tab)}><Icon name={item.icon}/>{item.label}</button>)}</nav>
+      <div className="header-account"><span className="header-name">{user.name.split(" ")[0]}</span><button className={`header-settings ${tab === "settings" ? "active" : ""}`} aria-label="Nastavení" onClick={() => setTab("settings")}><Icon name="settings"/></button><button className="avatar" aria-label="Můj účet" onClick={() => setTab("settings")}>{user.name.slice(0, 1).toUpperCase() || "S"}</button></div>
+    </div></header>
+    <div className={`app-body ${tab === "settings" ? "settings-layout" : ""}`}>
+      {tab !== "settings" && <aside className="deck-sidebar" aria-label="Moje balíčky"><div className="sidebar-title"><span>MOJE BALÍČKY</span><button className="icon-button" aria-label="Nový balíček" onClick={() => setDialog("deck")}><Icon name="plus"/></button></div><div className="sidebar-decks">{decks.map(item => <button className={`sidebar-deck ${deck?.id === item.id ? "selected" : ""}`} key={item.id} onClick={() => selectDeck(item.id)} aria-pressed={deck?.id === item.id}><span className="deck-mini"><Icon name="cards"/></span><span>{item.title}</span><span className="count">{item.words.length}</span></button>)}</div>{!decks.length && <p className="muted sidebar-empty">První balíček je začátek.<br/>Co se chceš naučit?</p>}<button className="chip add-deck" onClick={() => setDialog("deck")}><Icon name="plus"/>Vytvořit balíček</button><div className="sidebar-note"><span className="tiny-label">JEDNO SLOVO ZA DRUHÝM</span><p>Malé kroky.<br/><strong>Velká slovní zásoba.</strong></p><span className="note-symbol" aria-hidden="true">↗</span></div><div className="sidebar-summary"><span>{wordCount(total)}</span><span>{decks.length} balíčků</span></div></aside>}
+      <main id="main" className="workspace-main" tabIndex={-1}>
+        <div className="page-title"><div><p className="eyebrow">{tab === "study" ? "PÁR MINUT PRO TVOU ANGLIČTINU" : tab === "decks" ? "VŠECHNO MÁ SVÉ MÍSTO" : tab === "library" ? "TVOJE VLASTNÍ SLOVNÍ ZÁSOBA" : "PODLE TVÉHO TEMPA"}</p><h1>{tab === "study" ? "Jdeme na slovíčka." : tab === "decks" ? "Moje balíčky." : tab === "library" ? "Moje slovíčka." : "Nastavení."}</h1></div><div className="title-actions">{tab === "decks" ? <button className="button primary" onClick={() => setDialog("deck")}><Icon name="plus"/>Nový balíček</button> : tab !== "settings" && deck && <button className="button primary" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button>}</div></div>
+        {tab !== "settings" && tab !== "decks" && decks.length > 0 && <div className="mobile-decks chips" aria-label="Vyber balíček">{decks.map(item => <button key={item.id} className={`chip ${deck?.id === item.id ? "is-active" : ""}`} aria-pressed={deck?.id === item.id} onClick={() => selectDeck(item.id)}>{item.title}<span className="count">{item.words.length}</span></button>)}</div>}
+        {tab === "study" && <>
+          <div className="quick-stats"><div><Icon name="cards"/><strong>{words.length}</strong><span>v balíčku</span></div><div><Icon name="check"/><strong>{round ? round.index - round.missed.length + (round.done ? 1 : 0) : 0}</strong><span>umím v kole</span></div><div><Icon name="shuffle"/><strong>{round?.missed.length ?? 0}</strong><span>zopakovat</span></div></div>
+          {!deck ? <Empty title="Každé slovo se počítá." text="Vytvoř první balíček. Třeba Cestování, Práce nebo slova, která ti nejdou."><button className="button primary" onClick={() => setDialog("deck")}><Icon name="plus"/>Vytvořit balíček</button></Empty> : <>
+            <div className="section-heading"><div><span className="tiny-label">PRÁVĚ PROCVIČUJEŠ</span><h2>{deck.title}</h2></div>{modeChips}</div>
+            {!words.length ? <Empty title="Tady to začíná." text="Přidej první slovíčko nebo rovnou nahraj celý seznam."><button className="button primary" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button><button className="button secondary" onClick={() => setDialog("import")}><Icon name="upload"/>Hromadný import</button></Empty> : !round ? <div className="study-start panel"><span className="study-art" aria-hidden="true"><span className="mini-flash back">hello.</span><span className="mini-flash front">ahoj.<span>↗</span></span></span><span className="tiny-label">MALÁ CHVILKA. VELKÝ ROZDÍL.</span><h2>Připraveno?<br/>Tak pojď na to.</h2><p>{wordCount(words.length)} · {mode === "mix" ? "oba směry na přeskáčku" : mode === "en_cz" ? "z angličtiny do češtiny" : "z češtiny do angličtiny"}</p><button className="button primary start-button" onClick={() => begin()}>Začít procvičovat<Icon name="arrow"/></button><span className="muted start-foot">Chyby se vrátí do dalšího kola. Bez spěchu.</span></div> : round.done ? <div className="round-result panel"><span className="result-icon"><Icon name={round.missed.length ? "shuffle" : "check"}/></span><span className="tiny-label">KOLO HOTOVO</span><h2>{round.missed.length ? "Ještě kousek." : "Tohle máš v hlavě!"}</h2><p>V tomto kole umíš <strong>{round.ids.length - round.missed.length} z {round.ids.length}</strong>.</p><div className="result-actions">{round.missed.length > 0 && <button className="button primary" onClick={() => begin(round.missed)}>Zopakovat {wordCount(round.missed.length)}<Icon name="arrow"/></button>}<button className={`button ${round.missed.length ? "secondary" : "primary"}`} onClick={() => begin()}>Celý balíček znovu<Icon name="shuffle"/></button></div></div> : current && <div className="practice-panel panel"><div className="practice-top"><span className="chip static-chip">{direction === "en_cz" ? "EN → CZ" : "CZ → EN"}</span><span className="round-count"><strong>{round.index + 1}</strong> / {round.ids.length}</span><button className="icon-button" aria-label="Spustit kolo znovu" onClick={() => begin()}><Icon name="shuffle"/></button></div><div className="progress-track" role="progressbar" aria-label="Průběh kola" aria-valuemin={0} aria-valuemax={round.ids.length} aria-valuenow={round.index}><span style={{ width: `${round.index / round.ids.length * 100}%` }}/></div><button className={`flashcard ${round.flipped ? "revealed" : ""}`} onClick={() => setRound(previous => previous ? {...previous,flipped:!previous.flipped} : null)}><span className="tiny-label">{round.flipped ? "SPRÁVNÁ ODPOVĚĎ" : "JAK TO ŘEKNEŠ?"}</span><span className="flash-word">{round.flipped ? direction === "cz_en" ? current.en : current.cz : direction === "cz_en" ? current.cz : current.en}</span>{current.category && <span className="chip static-chip word-tag">{current.category}</span>}<span className="flip-hint">{round.flipped ? "Kliknutím vrátíš zadání" : "Klepni pro odpověď"}<span aria-hidden="true">↻</span></span></button><div className="practice-bottom"><button className="chip" onClick={() => speak(current)}><Icon name="sound"/>Výslovnost</button><span className="keyboard-tip">Otočit <kbd>mezerník</kbd></span></div><div className="grade-actions"><button className="button grade-again" disabled={!round.flipped} onClick={() => grade(false)}><Icon name="close"/><span>Ještě jednou</span><kbd>1</kbd></button><button className="button grade-know" disabled={!round.flipped} onClick={() => grade(true)}><Icon name="check"/><span>Tohle umím</span><kbd>2</kbd></button></div></div>}
+            <div className="study-tools"><button className="chip" onClick={() => setTab("library")}><Icon name="book"/>Zobrazit slovíčka</button><button className="chip" onClick={() => setDialog("import")}><Icon name="upload"/>Hromadný import</button></div>
+          </>}
+        </>}
+        {tab === "decks" && <><div className="list-summary"><span><strong>{decks.length}</strong> balíčků · <strong>{wordCount(total)}</strong></span><Search value={deckQuery} onChange={setDeckQuery} placeholder="Najít balíček"/></div><div className="deck-grid">{decks.filter(item => `${item.title} ${item.description ?? ""}`.toLocaleLowerCase("cs").includes(deckQuery.toLocaleLowerCase("cs"))).map((item,i) => <article key={item.id} className={`deck-card panel ${item.id === deck?.id ? "is-selected" : ""}`}><div className="deck-card-top"><span className={`deck-art tone-${i % 3}`}><Icon name="cards"/></span><span className="tiny-label">{String(i+1).padStart(2,"0")} / BALÍČEK</span><button className="icon-button subtle-danger" aria-label={`Smazat balíček ${item.title}`} disabled={busy} onClick={() => { if (window.confirm(`Smazat balíček „${item.title}“ i se všemi slovíčky?`)) void run(async () => {await deleteDeck(item.id); setDecks(previous => previous.filter(entry => entry.id !== item.id)); setRound(null); setNotice("Balíček odstraněn.");}); }}><Icon name="trash"/></button></div><h2>{item.title}</h2><p>{item.description || "Tvůj další kousek angličtiny."}</p><span className="chip static-chip">{wordCount(item.words.length)}</span><div className="deck-card-actions"><button className="button primary" onClick={() => {selectDeck(item.id);setTab("study");}}>Procvičovat<Icon name="arrow"/></button><button className="icon-button" aria-label={`Otevřít slovíčka: ${item.title}`} onClick={() => {selectDeck(item.id);setTab("library");}}><Icon name="book"/></button></div></article>)}<button className="new-deck-card" onClick={() => setDialog("deck")}><span><Icon name="plus"/></span><strong>Další balíček</strong><small>Nové téma, nové možnosti.</small></button></div></>}
+        {tab === "library" && (!deck ? <Empty title="Nejdřív vlastní balíček." text="Slovíčka tak budeš mít pěkně pohromadě."><button className="button primary" onClick={() => setDialog("deck")}><Icon name="plus"/>Vytvořit balíček</button></Empty> : <><div className="library-head"><div><h2>{deck.title}</h2><span className="muted">{wordCount(words.length)}</span></div><div className="chips"><button className="chip" onClick={() => setDialog("import")}><Icon name="upload"/>Import</button><button className="chip" disabled={!words.length} onClick={() => exportDeck(deck,"csv")}><Icon name="download"/>CSV</button><button className="chip" disabled={!words.length} onClick={() => exportDeck(deck,"json")}><Icon name="download"/>JSON</button></div></div><Search value={query} onChange={setQuery} placeholder="Hledat anglicky, česky nebo podle štítku…"/><div className="category-filters chips" aria-label="Filtrovat podle kategorie"><button className={`chip ${!category ? "is-active" : ""}`} aria-pressed={!category} onClick={() => setCategory("")}>Všechna<span className="count">{words.length}</span></button>{categories.map(value => <button className={`chip ${category === value ? "is-active" : ""}`} aria-pressed={category === value} key={value} onClick={() => setCategory(value)}>{value}</button>)}</div><div className="word-list panel"><div className="word-list-labels"><span>ANGLICKY</span><span>ČESKY</span><span>AKCE</span></div>{filtered.map(word => <WordItem key={word.id} word={word} disabled={busy} onSpeak={() => speak(word)} onSave={async value => {const updated=await updateWord(word.id,value);setDecks(previous => previous.map(item => item.id === deck.id ? {...item,words:item.words.map(old => old.id===word.id ? updated : old)} : item));setRound(null);setNotice("Slovíčko upraveno.");}} onDelete={() => run(async () => {await deleteWord(word.id);setDecks(previous => previous.map(item => item.id === deck.id ? {...item,words:item.words.filter(old => old.id!==word.id)} : item));setRound(null);setNotice("Slovíčko odstraněno.");})}/>)}{!filtered.length && <div className="table-empty"><Icon name={words.length ? "search" : "book"}/><h3>{words.length ? "Nic jsme nenašli." : "První slovo čeká na tebe."}</h3><p>{words.length ? "Zkus jiné hledání nebo jiný štítek." : "Přidej ho ručně nebo naimportuj celý seznam."}</p>{!words.length && <button className="chip is-active" onClick={() => setDialog("word")}><Icon name="plus"/>Přidat slovíčko</button>}</div>}</div><p className="list-foot">Zobrazeno {filtered.length} z {words.length} · Změny se automaticky ukládají.</p></>)}
+        {tab === "settings" && <div className="settings-stack"><section className="panel settings-panel"><div className="section-heading"><div><span className="tiny-label">PROCVIČOVÁNÍ</span><h2>Jak ti to vyhovuje?</h2></div><Icon name="cards"/></div><div className="setting-row"><div><strong>Výchozí směr</strong><p>Jak začnou tvoje další kola.</p></div><div className="chips">{modes.map(item => <button disabled={busy} className={`chip ${mode===item.value ? "is-active" : ""}`} aria-pressed={mode===item.value} key={item.value} onClick={() => void saveSettings({mode:item.value,autoPlay,speechRate})}>{item.label}</button>)}</div></div><div className="setting-row"><div><strong>Automatická výslovnost</strong><p>Přehrát anglický výraz po otočení.</p></div><button role="switch" aria-checked={autoPlay} aria-label="Automatická výslovnost" disabled={busy} className={`toggle ${autoPlay ? "on" : ""}`} onClick={() => void saveSettings({mode,autoPlay:!autoPlay,speechRate})}><span/></button></div><div className="setting-row"><div><strong>Rychlost hlasu</strong><p>Vyber si pohodlné tempo.</p></div><div className="chips">{[.8,.9,1,1.1].map(value => <button className={`chip ${speechRate===value ? "is-active" : ""}`} aria-pressed={speechRate===value} disabled={busy} key={value} onClick={() => void saveSettings({mode,autoPlay,speechRate:value})}>{value.toFixed(1)}×</button>)}</div></div></section><section className="panel settings-panel"><span className="tiny-label">TVŮJ ÚČET</span><div className="account-row"><span className="account-avatar">{user.name.slice(0,1)||"S"}</span><div><h2>{user.name || "Můj účet"}</h2><p className="muted">{user.email}</p></div><form action={signOut}><button className="chip" type="submit"><Icon name="exit"/>Odhlásit se</button></form></div><p className="account-note">Tvoje balíčky, slovíčka a nastavení patří jen tvému účtu.</p></section></div>}
+        <footer className="app-footer"><span>SLOVÍČKUJ.CZ <span className="footer-dot">●</span> JEDNO SLOVO ZA DRUHÝM</span><nav aria-label="Informace o aplikaci"><a href="/soukromi">Soukromí</a><a href="/podminky">Podmínky</a></nav></footer>
+      </main>
+    </div>
+    <nav className="mobile-nav" aria-label="Mobilní navigace">{nav.map(item => <button key={item.tab} aria-current={tab===item.tab ? "page" : undefined} className={tab===item.tab ? "active" : ""} onClick={() => setTab(item.tab)}><Icon name={item.icon}/><span>{item.label}</span></button>)}</nav>
+    {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="Zavřít oznámení" onClick={() => setNotice("")}><Icon name="close"/></button></div>}
+    {busy && <div className="saving" role="status">Ukládám…</div>}
+    {dialog && <Modal title={dialog === "deck" ? "Nový balíček" : dialog === "word" ? "Přidat slovíčko" : "Hromadný import"} onClose={() => setDialog(null)}>{dialog === "deck" ? <DeckForm onCancel={() => setDialog(null)} onSave={async (title,description) => {const created=await createDeck({title,description});setDecks(previous => [created,...previous]);selectDeck(created.id);setTab("library");setDialog(null);setNotice("Balíček vytvořen. Přidej první slovíčko.");}}/> : dialog === "word" ? <WordForm onCancel={() => setDialog(null)} onSave={async (en,cz,wordCategory) => {if(!deck)return;const created=await createWord(deck.id,{en,cz,category:wordCategory});setDecks(previous => previous.map(item => item.id===deck.id ? {...item,words:[...item.words,created]} : item));setRound(null);setDialog(null);setNotice("Slovíčko uloženo.");}}/> : <ImportForm onCancel={() => setDialog(null)} onSave={async text => {if(!deck)return;const created=await bulkImport(deck.id,parseImport(text));setDecks(previous => previous.map(item => item.id===deck.id ? {...item,words:[...item.words,...created]} : item));setRound(null);setDialog(null);setNotice(`Uloženo ${wordCount(created.length)}.`);}}/>}</Modal>}
   </div>;
 }
 
-function parseImport(text: string) {
-  return text.split(/\r?\n/).map((line) => {
-    const delim = line.includes("\t") ? "\t" : line.includes(";") ? ";" : ",";
-    const parts = line.split(delim).map((item) => item.trim());
-    if (parts.length < 2 || !parts[0] || !parts[1]) return null;
-    return { en: parts[0], cz: parts[1], category: parts[2]?.replace(/^\[|\]$/g, "") };
-  }).filter((row) => row !== null);
+function Search({value,onChange,placeholder}:{value:string;onChange:(value:string)=>void;placeholder:string}) {return <label className="search-field"><Icon name="search"/><input aria-label={placeholder} placeholder={placeholder} value={value} onChange={event=>onChange(event.target.value)}/>{value && <button type="button" aria-label="Vymazat hledání" onClick={()=>onChange("")}><Icon name="close"/></button>}</label>;}
+function Empty({title,text,children}:{title:string;text:string;children:ReactNode}) {return <section className="empty-state panel"><span className="empty-icon"><Icon name="cards"/></span><h2>{title}</h2><p>{text}</p><div className="empty-actions">{children}</div></section>;}
+function Modal({title,children,onClose}:{title:string;children:ReactNode;onClose:()=>void}) {
+  const ref=useRef<HTMLDialogElement>(null); const titleId=useId();
+  useEffect(()=>{const dialog=ref.current; const previous=document.activeElement as HTMLElement;dialog?.showModal();dialog?.querySelector<HTMLInputElement | HTMLTextAreaElement>("input, textarea")?.focus();return()=>{dialog?.close();previous?.focus();};},[]);
+  return <dialog ref={ref} className="modal" aria-labelledby={titleId} onCancel={event=>{event.preventDefault();onClose();}} onClick={event=>{if(event.target===event.currentTarget){const bounds=event.currentTarget.getBoundingClientRect();if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)onClose();}}}><div className="modal-head"><div><span className="tiny-label">JEŠTĚ KOUSEK ANGLIČTINY</span><h2 id={titleId}>{title}</h2></div><button className="icon-button" aria-label="Zavřít dialog" onClick={onClose}><Icon name="close"/></button></div>{children}</dialog>;
 }
-
-function exportDeck(deck: Deck | undefined, format: "json" | "csv") {
-  if (!deck) return;
-  const body = format === "json" ? JSON.stringify({ title: deck.title, description: deck.description, words: deck.words.map(({ en, cz, category }) => ({ en, cz, category })) }, null, 2) : ["en;cz;category", ...deck.words.map((word) => [word.en, word.cz, word.category ?? ""].map((value) => `"${value.replaceAll('"', '""')}"`).join(";"))].join("\n");
-  const blob = new Blob([body], { type: format === "json" ? "application/json" : "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${deck.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.${format}`; anchor.click(); URL.revokeObjectURL(url);
+function DeckForm({onSave,onCancel}:{onSave:(title:string,description:string)=>Promise<void>;onCancel:()=>void}) {return <AsyncForm onCancel={onCancel} submit="Vytvořit balíček" onSubmit={async data=>onSave(String(data.get("title")),String(data.get("description")))}><label>Název balíčku<input autoFocus name="title" required maxLength={100} placeholder="Třeba Cestování"/></label><label>Krátký popis <span className="optional">nepovinné</span><textarea name="description" rows={2} maxLength={500} placeholder="Co si v něm chceš procvičit?"/></label></AsyncForm>;}
+function WordForm({onSave,onCancel}:{onSave:(en:string,cz:string,category:string)=>Promise<void>;onCancel:()=>void}) {return <AsyncForm onCancel={onCancel} submit="Uložit slovíčko" onSubmit={async data=>onSave(String(data.get("en")),String(data.get("cz")),String(data.get("category")))}><div className="form-pair"><label>Anglicky<input autoFocus name="en" required maxLength={240} placeholder="a journey"/></label><label>Česky<input name="cz" required maxLength={240} placeholder="cesta"/></label></div><label>Štítek <span className="optional">nepovinné</span><input name="category" maxLength={100} placeholder="Třeba cestování"/></label></AsyncForm>;}
+function ImportForm({onSave,onCancel}:{onSave:(text:string)=>Promise<void>;onCancel:()=>void}) {
+  const [text,setText]=useState(""); const rows=parseImport(text);
+  return <AsyncForm onCancel={onCancel} submit={`Importovat ${wordCount(rows.length)}`} disabled={!rows.length||rows.length>1000} onSubmit={async()=>onSave(text)}><p className="import-help">Jeden řádek = jedno slovíčko. Odděl angličtinu, češtinu a volitelný štítek středníkem, tabulátorem nebo čárkou.</p><label className="sr-only" htmlFor="import-text">Seznam slovíček</label><textarea autoFocus id="import-text" className="import-input" value={text} onChange={event=>setText(event.target.value)} rows={6} placeholder={'a journey; cesta; cestování\nto learn; učit se; slovesa'}/><div className="import-preview"><div className="preview-heading"><span className="tiny-label">NÁHLED IMPORTU</span><span className="chip static-chip">{rows.length} / 1000</span></div>{rows.slice(0,4).map((row,i)=><div className="preview-row" key={i}><strong>{row.en}</strong><span>{row.cz}</span>{row.category&&<span className="word-tag">{row.category}</span>}</div>)}{!rows.length&&<p className="muted">Tady se objeví náhled platných řádků.</p>}{rows.length>4&&<p className="muted">A dalších {rows.length-4}…</p>}{rows.length>1000&&<p className="form-error">Najednou lze importovat nejvýše 1000 slovíček.</p>}</div></AsyncForm>;
 }
-
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className="modal-scrim" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-label={title}><div className="modal-head"><div><p className="eyebrow">MALÝ KROK ZAČÍNÁ</p><h2>{title}</h2></div><button className="modal-close" onClick={onClose} aria-label="Zavřít">×</button></div>{children}</section></div>;
+function AsyncForm({children,onSubmit,onCancel,submit,disabled=false}:{children:ReactNode;onSubmit:(data:FormData)=>Promise<void>;onCancel:()=>void;submit:string;disabled?:boolean}) {
+  const [busy,setBusy]=useState(false); const [error,setError]=useState("");
+  return <form className="form-stack" onSubmit={async event=>{event.preventDefault();const data=new FormData(event.currentTarget);setBusy(true);setError("");try{await onSubmit(data);}catch(error){setError(error instanceof Error?error.message:"Uložení se nezdařilo. Zkus to znovu.");}finally{setBusy(false);}}}>{children}{error&&<p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button type="button" className="button secondary" onClick={onCancel} disabled={busy}>Zrušit</button><button type="submit" className="button primary" disabled={busy||disabled}>{busy?"Ukládám…":submit}{!busy&&<Icon name="arrow"/>}</button></div></form>;
 }
-
-function DeckForm({ onSave, onCancel }: { onSave: (title: string, description: string) => Promise<void>; onCancel: () => void }) {
-  const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [busy, setBusy] = useState(false);
-  return <form className="form-stack" onSubmit={async (e) => { e.preventDefault(); setBusy(true); try { await onSave(title, description); } finally { setBusy(false); } }}><label>Název balíčku<input required maxLength={100} autoFocus placeholder="např. Cestování" value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>Krátký popis <span className="optional">(nepovinné)</span><textarea rows={3} maxLength={500} placeholder="Co si v něm chceš procvičit?" value={description} onChange={(e) => setDescription(e.target.value)} /></label><div className="form-actions"><button type="button" className="quiet-button" onClick={onCancel}>Zrušit</button><button disabled={busy} className="primary-button">Vytvořit balíček <span>→</span></button></div></form>;
+function WordItem({word,onSave,onDelete,onSpeak,disabled}:{word:Word;onSave:(value:{en:string;cz:string;category:string})=>Promise<void>;onDelete:()=>Promise<void>;onSpeak:()=>void;disabled:boolean}) {
+  const [editing,setEditing]=useState(false);
+  return <article className="word-row"><div className="word-en"><strong>{word.en}</strong>{word.category&&<span className="word-tag">{word.category}</span>}</div><div className="word-cz">{word.cz}</div><div className="word-actions"><button className="icon-button" aria-label={`Výslovnost: ${word.en}`} onClick={onSpeak}><Icon name="sound"/></button><button className="icon-button" aria-label={`Upravit: ${word.en}`} onClick={()=>setEditing(true)}><Icon name="edit"/></button><button className="icon-button subtle-danger" disabled={disabled} aria-label={`Smazat: ${word.en}`} onClick={()=>{if(window.confirm(`Smazat slovíčko „${word.en}“?`))void onDelete();}}><Icon name="trash"/></button></div>{editing&&<Modal title="Upravit slovíčko" onClose={()=>setEditing(false)}><AsyncForm submit="Uložit změny" onCancel={()=>setEditing(false)} onSubmit={async data=>{await onSave({en:String(data.get("en")),cz:String(data.get("cz")),category:String(data.get("category"))});setEditing(false);}}><div className="form-pair"><label>Anglicky<input name="en" required maxLength={240} autoFocus defaultValue={word.en}/></label><label>Česky<input name="cz" required maxLength={240} defaultValue={word.cz}/></label></div><label>Štítek<input name="category" maxLength={100} defaultValue={word.category??""}/></label></AsyncForm></Modal>}</article>;
 }
-
-function WordForm({ onSave, onCancel }: { onSave: (en: string, cz: string, category: string) => Promise<void>; onCancel: () => void }) {
-  const [en, setEn] = useState(""); const [cz, setCz] = useState(""); const [category, setCategory] = useState(""); const [busy, setBusy] = useState(false);
-  return <form className="form-stack" onSubmit={async (e) => { e.preventDefault(); setBusy(true); try { await onSave(en, cz, category); } finally { setBusy(false); } }}><label>Anglický výraz<input required autoFocus placeholder="to figure out" value={en} onChange={(e) => setEn(e.target.value)} /></label><label>Český překlad<input required placeholder="rozklíčovat" value={cz} onChange={(e) => setCz(e.target.value)} /></label><label>Kategorie nebo štítek <span className="optional">(nepovinné)</span><input placeholder="např. fráze" value={category} onChange={(e) => setCategory(e.target.value)} /></label><div className="form-actions"><button type="button" className="quiet-button" onClick={onCancel}>Zrušit</button><button disabled={busy} className="primary-button">Přidat slovíčko <span>→</span></button></div></form>;
-}
-
-function ImportForm({ onImport, onCancel }: { onImport: (text: string) => Promise<void>; onCancel: () => void }) {
-  const [text, setText] = useState(""); const preview = parseImport(text); const [busy, setBusy] = useState(false);
-  return <form className="form-stack" onSubmit={async (e) => { e.preventDefault(); setBusy(true); try { await onImport(text); } finally { setBusy(false); } }}><p className="import-hint">Vlož řádky ve formátu <code>anglicky ; česky ; [kategorie]</code>. Fungují také čárky a tabulátory.</p><textarea className="import-area" rows={6} autoFocus placeholder={'to figure out ; rozklíčovat ; fráze\na journey ; cesta ; cestování'} value={text} onChange={(e) => setText(e.target.value)} /><div className="import-preview"><div className="preview-title">NÁHLED · {preview.length} {preview.length === 1 ? "ŘÁDEK" : "ŘÁDKŮ"}</div>{preview.slice(0, 4).map((row, i) => <div className="preview-row" key={i}><span>{row.en}</span><span>{row.cz}</span><span>{row.category}</span></div>)}{preview.length > 4 && <small>A dalších {preview.length - 4}…</small>}</div><div className="form-actions"><button type="button" className="quiet-button" onClick={onCancel}>Zrušit</button><button disabled={busy || !preview.length} className="primary-button">Přidat {preview.length} slovíček <span>→</span></button></div></form>;
-}
-
-function WordRow({ word, onSave, onDelete }: { word: Word; onSave: (value: { en: string; cz: string; category: string }) => Promise<void>; onDelete: () => Promise<void> }) {
-  const [editing, setEditing] = useState(false); const [en, setEn] = useState(word.en); const [cz, setCz] = useState(word.cz); const [category, setCategory] = useState(word.category ?? "");
-  return <tr>{editing ? <><td><input aria-label="Anglické slovíčko" value={en} onChange={(e) => setEn(e.target.value)} /></td><td><input aria-label="Český překlad" value={cz} onChange={(e) => setCz(e.target.value)} /></td><td><input aria-label="Kategorie" value={category} onChange={(e) => setCategory(e.target.value)} /></td><td className="row-actions"><button onClick={async () => { await onSave({ en, cz, category }); setEditing(false); }}>Uložit</button><button onClick={() => setEditing(false)}>×</button></td></> : <><td><strong>{word.en}</strong></td><td>{word.cz}</td><td>{word.category && <span className="table-tag">{word.category}</span>}</td><td className="row-actions"><button aria-label="Upravit" onClick={() => setEditing(true)}>Upravit</button><button aria-label="Smazat" onClick={async () => { if (window.confirm(`Smazat „${word.en}“?`)) await onDelete(); }}>×</button></td></>}</tr>;
+function exportDeck(deck:Deck,format:"csv"|"json") {
+  const body=format==="json"?JSON.stringify({title:deck.title,description:deck.description,words:deck.words.map(({en,cz,category})=>({en,cz,category}))},null,2):["en;cz;category",...deck.words.map(word=>[word.en,word.cz,word.category??""].map(value=>`"${value.replaceAll('"','""')}"`).join(";"))].join("\n");
+  const url=URL.createObjectURL(new Blob([body],{type:format==="json"?"application/json":"text/csv;charset=utf-8"}));const anchor=document.createElement("a");anchor.href=url;anchor.download=`${deck.title.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-")}.${format}`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
