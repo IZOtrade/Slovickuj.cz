@@ -15,7 +15,7 @@ Osobní aplikace pro správu anglicko-českých slovíček a jejich opakování.
 ## Lokální konfigurace
 
 1. Zkopíruj `.env.example` do `.env`.
-2. Vlož pooled PostgreSQL connection string z Neon do `DATABASE_URL` a přímý (nepoolovaný) string do `DIRECT_URL`, který Prisma používá pro migrace.
+2. Vlož pooled PostgreSQL connection string z Neon do `DATABASE_URL` a přímý (nepoolovaný) string do `DATABASE_URL_UNPOOLED`, který Prisma používá pro migrace.
 3. V Google Cloud Console vytvoř OAuth klienta pro web. Redirect URI je `https://<tvoje-doména>/api/auth/callback/google` (pro lokální vývoj `http://localhost:3000/api/auth/callback/google`). Doplň `AUTH_GOOGLE_ID` a `AUTH_GOOGLE_SECRET`.
 4. Nastav `AUTH_SECRET` na náhodnou hodnotu, například příkazem `npx auth secret`.
 5. Nainstaluj balíčky příkazem `npm install`.
