@@ -54,6 +54,8 @@ export function Workspace({ user, initialDecks, settings: saved, signOut }: Prop
   const filtered = words.filter(word => (!category || word.category === category) && `${word.en} ${word.cz} ${word.category ?? ""}`.toLocaleLowerCase("cs").includes(query.toLocaleLowerCase("cs")));
   const direction = current && round ? round.directions[current.id] : "en_cz";
 
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, [tab]);
+
   function selectDeck(id: string) { setSelectedId(id); setRound(null); setCategory(""); setQuery(""); }
   function begin(ids = words.map(word => word.id), requestedMode = mode) {
     if (!ids.length) return;

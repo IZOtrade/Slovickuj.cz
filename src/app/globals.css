@@ -54,3 +54,4 @@
   .toggle{min-width:48px;min-height:44px}
   .app-footer nav a{display:inline-flex;align-items:center;min-height:44px}
 }
+@media(max-width:640px){.wordmark{min-height:44px}.toggle{width:64px;height:44px;border-radius:24px}.toggle>span{width:34px;height:34px;left:5px;top:5px}.toggle.on>span{transform:translateX(20px)}.toast button{width:44px;height:44px}.deck-card-actions>.button{flex-basis:120px}.deck-card-actions>.open-deck{flex-basis:auto}}
