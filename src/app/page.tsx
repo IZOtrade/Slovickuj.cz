@@ -15,6 +15,7 @@ export default async function Home() {
           <button className="google-button" type="submit"><span className="google-g">G</span> Pokračovat přes Google <span aria-hidden="true">→</span></button>
         </form>
         <div className="auth-foot"><span>Vaše slovíčka zůstávají soukromá.</span><span>Zdarma pro vaše učení</span></div>
+        <nav aria-label="Informace o aplikaci" style={{ display: "flex", gap: 20, marginTop: 20, fontSize: 12, color: "var(--green)", textDecoration: "underline" }}><a href="/soukromi">Soukromí</a><a href="/podminky">Podmínky používání</a></nav>
       </section>
       <aside className="auth-art" aria-hidden="true">
         <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
