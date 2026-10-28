@@ -59,9 +59,11 @@ export async function bulkImport(deckId: string, input: Array<{ en: string; cz: 
   const deck = await prisma.deck.findFirst({ where: { id: deckId, ownerId: userId }, select: { id: true } });
   if (!deck) throw new Error("Balíček nebyl nalezen.");
   const rows = z.array(wordFields).max(1000).parse(input).filter((row) => row.en && row.cz);
-  if (rows.length) await prisma.word.createMany({ data: rows.map((row) => ({ ...row, deckId })) });
+  const created = rows.length
+    ? await prisma.word.createManyAndReturn({ data: rows.map((row) => ({ ...row, deckId })) })
+    : [];
   revalidatePath("/");
-  return rows.length;
+  return created;
 }
 
 export async function updateSettings(input: { mode: string; autoPlay: boolean; speechRate: number }) {

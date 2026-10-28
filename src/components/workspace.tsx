@@ -83,10 +83,9 @@ export function Workspace({ user, initialDecks, settings: savedSettings, signOut
     if (!deck) return;
     const parsed = parseImport(text);
     if (!parsed.length) { setNotice("V textu jsem nenašel žádné platné řádky."); return; }
-    const count = await bulkImport(deck.id, parsed);
-    const localRows = parsed.map((row, i) => ({ ...row, id: `import-${Date.now()}-${i}` }));
+    const localRows = await bulkImport(deck.id, parsed);
     setDecks((current) => current.map((item) => item.id === deck.id ? { ...item, words: [...item.words, ...localRows] } : item));
-    setImportDialog(false); setNotice(`Přidáno ${count} slovíček.`);
+    setImportDialog(false); setNotice(`Přidáno ${localRows.length} slovíček.`);
   }
 
   return <div className="app-shell" onKeyDown={(event) => {
@@ -154,7 +153,7 @@ function parseImport(text: string) {
     const parts = line.split(delim).map((item) => item.trim());
     if (parts.length < 2 || !parts[0] || !parts[1]) return null;
     return { en: parts[0], cz: parts[1], category: parts[2]?.replace(/^\[|\]$/g, "") };
-  }).filter((row): row is { en: string; cz: string; category: string | undefined } => !!row);
+  }).filter((row) => row !== null);
 }
 
 function exportDeck(deck: Deck | undefined, format: "json" | "csv") {
