@@ -17,3 +17,40 @@
 @media(max-width:480px){.auth-header .chip{display:none}.auth-copy h1{font-size:38px;letter-spacing:-1.8px}.showcase-card>strong{font-size:34px;line-height:1.1;text-align:center;padding:0 12px;overflow-wrap:anywhere}}
 @media(max-width:360px){.mobile-decks,.category-filters{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}.auth-copy h1{font-size:34px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* Keep every action readable and reachable on touch screens. */
+.delete-deck{margin-left:auto;color:var(--red-dark);background:var(--red-soft);border-color:transparent;flex:none}
+.deck-card-actions>.open-deck{flex:none;justify-content:center}
+.mobile-action-label{display:none}
+.delete-explanation{display:grid;gap:12px;font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.delete-explanation>p:last-child{color:var(--muted);font-size:12px}
+.modal-head>div{min-width:0;overflow-wrap:anywhere}
+.account-row p{overflow-wrap:anywhere}
+@media(max-width:640px){
+  .page-title{flex-wrap:wrap;align-items:center;gap:16px}
+  .title-actions{padding:0}
+  .title-actions .button{font-size:11px;gap:8px;padding:11px 14px;min-height:44px;width:auto}
+  .header-settings,.avatar{width:44px;height:44px}
+  .header-inner{gap:8px}
+  .chip,.mobile-decks .chip,.category-filters>.chip,.library-head .chip,.study-tools .chip,.practice-bottom .chip,.section-heading>.chips .chip,.category-filters .chip{min-height:44px}
+  .chip.static-chip{min-height:28px}
+  .mobile-decks .chip{max-width:none;white-space:normal;overflow:visible;overflow-wrap:anywhere;max-width:calc(100vw - 56px)}
+  .category-filters>.chip{max-width:calc(100vw - 56px);white-space:normal;overflow-wrap:anywhere}
+  .deck-card-top{flex-wrap:wrap}
+  .deck-card-top .tiny-label{flex:1}
+  .deck-card-actions{flex-wrap:wrap}
+  .deck-card-actions>.button{min-height:44px}
+  .word-actions{display:flex;flex-wrap:wrap;gap:8px}
+  .word-actions .icon-button{display:inline-flex;justify-content:center;gap:6px;width:auto;min-width:44px;height:auto;min-height:44px;padding:9px 10px}
+  .mobile-action-label{display:inline;font-size:10px;font-weight:700}
+  .practice-top .icon-button,.modal-head>.icon-button{width:44px;height:44px}
+  .search-field button{min-width:44px;min-height:44px}
+  .search-field input,.form-stack .import-input{font-size:16px}
+  .mobile-nav{grid-template-columns:repeat(4,minmax(0,1fr));padding-left:8px;padding-right:8px}
+  .modal{max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overscroll-behavior:contain;scroll-padding:16px}
+  .modal-head{position:sticky;top:-22px;background:white;z-index:1;padding:12px 0;margin-top:-12px;margin-bottom:12px}
+  .form-actions{position:sticky;bottom:-22px;background:white;padding:16px 0 12px;margin-bottom:-12px;z-index:1}
+  .form-actions>.button{min-height:48px}
+  .toggle{min-width:48px;min-height:44px}
+  .app-footer nav a{display:inline-flex;align-items:center;min-height:44px}
+}
