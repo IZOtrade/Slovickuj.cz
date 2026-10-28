@@ -27,9 +27,31 @@
 .modal-head>div{min-width:0;overflow-wrap:anywhere}
 .account-row p{overflow-wrap:anywhere}
 @media(max-width:640px){
-  .page-title{flex-wrap:wrap;align-items:center;gap:16px}
-  .title-actions{padding:0}
-  .title-actions .button{font-size:11px;gap:8px;padding:11px 14px;min-height:44px;width:auto}
+  .app-body{padding-top:18px}
+  .page-title{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 10px;margin-bottom:14px;min-height:0}
+  .page-title>div:first-child{display:contents}
+  .page-title .eyebrow{grid-column:1 / -1;margin-bottom:0}
+  .page-title h1{grid-column:1;grid-row:2;font-size:clamp(20px,5.5vw,25px);max-width:none}
+  .title-actions{grid-column:2;grid-row:2;justify-self:end;padding:0}
+  .title-actions .button{font-size:10px;gap:5px;padding:10px;min-height:44px;width:auto;white-space:nowrap}
+  .title-actions .button .icon{width:16px;height:16px}
+  .mobile-decks{margin-top:0;margin-bottom:12px}
+  .quick-stats{gap:7px;margin-bottom:14px}
+  .quick-stats>div{padding:7px 5px;gap:3px;border-radius:11px}
+  .quick-stats strong{font-size:20px;line-height:1.1}
+  .section-heading{gap:8px;margin-bottom:10px}
+  .section-heading h2{margin-top:1px}
+  .empty-state{padding:22px 18px}
+  .empty-state .empty-icon{width:44px;height:44px;border-radius:13px;margin-bottom:12px}
+  .empty-state .empty-icon .icon{width:24px;height:24px}
+  .empty-state h2{font-size:22px}
+  .empty-state p{margin:8px auto 14px}
+  .study-start{min-height:300px;padding:23px 20px}
+  .study-start h2{font-size:32px;margin:12px 0 10px}
+  .study-start .start-button{margin-top:20px}
+  .practice-panel{padding:12px}
+  .flashcard{min-height:220px}
+  .study-tools{margin-top:10px}
   .header-settings,.avatar{width:44px;height:44px}
   .header-inner{gap:8px}
   .chip,.mobile-decks .chip,.category-filters>.chip,.library-head .chip,.study-tools .chip,.practice-bottom .chip,.section-heading>.chips .chip,.category-filters .chip{min-height:44px}
