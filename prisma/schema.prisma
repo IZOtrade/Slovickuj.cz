@@ -61,6 +61,7 @@ model Deck {
   ownerId     String
   owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   words       Word[]
+  practiceRounds PracticeRound[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -74,6 +75,8 @@ model Word {
   category  String?
   deckId    String
   deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  progress  WordProgress?
+  reviews   PracticeReview[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -88,4 +91,49 @@ model UserSettings {
   autoPlay  Boolean  @default(false)
   speechRate Float   @default(1)
   updatedAt DateTime @updatedAt
+}
+
+model WordProgress {
+  wordId         String   @id
+  word           Word     @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  lastRating     String
+  reviewCount    Int      @default(0)
+  knownCount     Int      @default(0)
+  unsureCount    Int      @default(0)
+  unknownCount   Int      @default(0)
+  knownStreak    Int      @default(0)
+  lastReviewedAt DateTime
+  nextReviewAt   DateTime
+}
+
+model PracticeRound {
+  id             String   @id
+  deckId         String
+  deck           Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  mode           String
+  totalWords     Int
+  reviewedCount  Int      @default(0)
+  knownCount     Int      @default(0)
+  unsureCount    Int      @default(0)
+  unknownCount   Int      @default(0)
+  startedAt      DateTime @default(now())
+  lastReviewedAt DateTime @default(now())
+  finishedAt     DateTime?
+  reviews        PracticeReview[]
+
+  @@index([deckId, lastReviewedAt])
+}
+
+model PracticeReview {
+  id        String   @id
+  roundId   String
+  round     PracticeRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  wordId    String?
+  word      Word?    @relation(fields: [wordId], references: [id], onDelete: SetNull)
+  rating    String
+  direction String
+  createdAt DateTime @default(now())
+
+  @@unique([roundId, wordId])
+  @@index([wordId, createdAt])
 }

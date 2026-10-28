@@ -1,5 +1,7 @@
 export type Rating = "unknown" | "unsure" | "known";
 export type Round = {
+  sessionId: string;
+  mode: "mix" | "en_cz" | "cz_en";
   ids: string[];
   directions: Record<string, "en_cz" | "cz_en">;
   index: number;

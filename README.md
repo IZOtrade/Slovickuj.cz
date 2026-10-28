@@ -6,7 +6,9 @@ Osobní aplikace pro správu anglicko-českých slovíček a jejich opakování.
 
 - Soukromé balíčky a slovíčka pro přihlášeného uživatele.
 - Prázdný prostor po přihlášení; uživatel si zakládá vlastní balíčky a vkládá vlastní slovíčka.
-- Cyklické opakování s dalším kolem pouze z chybně zodpovězených slov.
+- Hodnocení Vím / Tuším / Nevím tlačítky, klávesami nebo tahem kartičky. Další kolo může obsahovat jen nejistá a neznámá slova.
+- Trvalá historie každého balíčku a poslední stav jednotlivých slov. Každé hodnocení se ukládá ihned, včetně nedokončených kol; opakované odeslání stejného hodnocení se nezapočítá podruhé.
+- Celý balíček je vždy dostupný včetně známých slov. Doporučené opakování zahrnuje nová, nejistá a neznámá slova i známá slova po uplynutí intervalu (1, 3, 7, 14, 30, 60 dní). Opakování známého slova před termínem další termín neposouvá.
 - Směr EN → CZ, CZ → EN a náhodný mix.
 - Hromadný import z textu (středník, tabulátor nebo čárka), inline úprava, hledání a export JSON/CSV.
 - Výslovnost přes Web Speech API, uživatelská rychlost a automatické přehrávání.

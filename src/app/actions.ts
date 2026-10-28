@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { storeReview, type ReviewInput } from "@/lib/practice-store";
 
 async function ownerId() {
   const session = await auth();
@@ -71,4 +72,14 @@ export async function updateSettings(input: { mode: string; speechRate: number }
   const settings = z.object({ mode: z.enum(["mix", "en_cz", "cz_en"]), speechRate: z.number().min(0.5).max(1.5) }).parse(input);
   await prisma.userSettings.upsert({ where: { userId }, update: settings, create: { userId, ...settings } });
   revalidatePath("/");
+}
+
+export async function recordReview(input: ReviewInput) {
+  const userId = await ownerId();
+  const fields = z.object({
+    eventId: z.uuid(), sessionId: z.uuid(), wordId: z.string().min(1).max(100), deckId: z.string().min(1).max(100),
+    totalWords: z.number().int().min(1).max(100000), mode: z.enum(["mix", "en_cz", "cz_en"]),
+    direction: z.enum(["en_cz", "cz_en"]), rating: z.enum(["unknown", "unsure", "known"]),
+  }).parse(input);
+  return storeReview(userId, fields);
 }

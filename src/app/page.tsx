@@ -1,6 +1,7 @@
 import { auth, signIn, signOut } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Workspace } from "@/components/workspace";
+import { loadDeckHistory } from "@/lib/practice-store";
 
 export default async function Home() {
   const session = await auth();
@@ -27,5 +28,6 @@ export default async function Home() {
     prisma.userSettings.upsert({ where: { userId: session.user.id }, update: {}, create: { userId: session.user.id } }),
   ]);
 
-  return <Workspace user={{ name: session.user.name ?? "", email: session.user.email ?? "", image: session.user.image ?? "" }} initialDecks={decks} settings={updatedSettings} signOut={async () => { "use server"; await signOut(); }} />;
+  const initialHistory = Object.fromEntries(await Promise.all(decks.map(async deck => [deck.id, await loadDeckHistory(deck.id, session.user.id!)])));
+  return <Workspace user={{ name: session.user.name ?? "", email: session.user.email ?? "", image: session.user.image ?? "" }} initialDecks={decks} initialHistory={initialHistory} settings={updatedSettings} signOut={async () => { "use server"; await signOut(); }} />;
 }
